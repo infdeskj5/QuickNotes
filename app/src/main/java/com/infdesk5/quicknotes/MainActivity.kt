@@ -8,8 +8,14 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
+import android.widget.BaseAdapter
 import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.ListView
+import android.widget.TextView
 import android.widget.Toast
 import android.widget.Toolbar
 import androidx.activity.ComponentActivity
@@ -20,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -105,7 +112,7 @@ class MainActivity : ComponentActivity() {
         setContentView(R.layout.activity_main)
 
         setActionBar(findViewById<Toolbar>(R.id.toolbar))
-        actionBar?.title = getString(R.string.app_name)
+        actionBar?.setDisplayShowTitleEnabled(false)
 
         editText = findViewById(R.id.note_edit)
         editText.addTextChangedListener(textWatcher)
@@ -147,8 +154,14 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        saveJob?.cancel()
+        saveCurrentNoteBlocking()
         super.onPause()
-        saveNow()
+    }
+
+    override fun onStop() {
+        saveCurrentNoteBlocking()
+        super.onStop()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -171,7 +184,7 @@ class MainActivity : ComponentActivity() {
             R.id.action_save -> {
                 lifecycleScope.launch {
                     saveCurrentNoteNow()
-                    toast("Saved")
+                    toast(getString(R.string.saved))
                 }
                 true
             }
@@ -252,8 +265,25 @@ class MainActivity : ComponentActivity() {
             lastSavedText = text
         } else {
             withContext(Dispatchers.Main) {
-                toast("Save failed. Choose the notes folder again.")
+                toast(getString(R.string.save_failed_choose_folder))
             }
+        }
+    }
+
+    private fun saveCurrentNoteBlocking() {
+        val uri = currentNoteUri ?: return
+        val text = editText.text.toString()
+
+        if (text == lastSavedText) {
+            return
+        }
+
+        val success = runBlocking(Dispatchers.IO) {
+            writeText(uri, text)
+        }
+
+        if (success) {
+            lastSavedText = text
         }
     }
 
@@ -291,7 +321,7 @@ class MainActivity : ComponentActivity() {
             val created = createFileInTree(tree, DEFAULT_NOTE_NAME)
 
             if (created == null) {
-                toast("Could not create a note in the selected folder.")
+                toast(getString(R.string.could_not_create_note))
                 return@launch
             }
 
@@ -332,7 +362,7 @@ class MainActivity : ComponentActivity() {
     private fun openNote(uri: Uri) {
         lifecycleScope.launch {
             if (!openNoteInternal(uri)) {
-                toast("Could not open note.")
+                toast(getString(R.string.could_not_open_note))
             }
         }
     }
@@ -351,7 +381,7 @@ class MainActivity : ComponentActivity() {
             val doc = createFileInTree(tree, newNoteName())
 
             if (doc == null) {
-                toast("Could not create a new note.")
+                toast(getString(R.string.could_not_create_note))
                 return@launch
             }
 
@@ -377,7 +407,7 @@ class MainActivity : ComponentActivity() {
             val doc = createFileInTree(tree, newNoteName())
 
             if (doc == null) {
-                toast("Could not create a new note.")
+                toast(getString(R.string.could_not_create_note))
                 return@launch
             }
 
@@ -393,7 +423,7 @@ class MainActivity : ComponentActivity() {
             if (success) {
                 lastSavedText = text
             } else {
-                toast("Save failed. Choose the notes folder again.")
+                toast(getString(R.string.save_failed_choose_folder))
             }
 
             setCursorEndAndShowKeyboard()
@@ -416,26 +446,100 @@ class MainActivity : ComponentActivity() {
                     tree.listFiles()
                         .filter { it.isFile && isTextFile(it) }
                         .sortedByDescending { it.lastModified() }
+                        .toMutableList()
                 } catch (e: Exception) {
-                    emptyList<DocumentFile>()
+                    mutableListOf<DocumentFile>()
                 }
             }
 
             if (docs.isEmpty()) {
-                toast("No notes found in this folder.")
+                toast(getString(R.string.no_notes_found))
                 return@launch
             }
 
-            val names = docs.map { it.name ?: "Note" }.toTypedArray()
+            val listView = ListView(this@MainActivity)
 
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("Notes")
-                .setItems(names) { _, which ->
-                    openNote(docs[which].uri)
+            val adapter = NotesAdapter(docs) { doc, listAdapter ->
+                renameNote(doc, listAdapter)
+            }
+
+            listView.adapter = adapter
+
+            val dialog = AlertDialog.Builder(this@MainActivity)
+                .setTitle(getString(R.string.notes))
+                .setView(listView)
+                .setNegativeButton(getString(R.string.cancel), null)
+                .create()
+
+            listView.setOnItemClickListener { _, _, position, _ ->
+                if (position in docs.indices) {
+                    dialog.dismiss()
+                    openNote(docs[position].uri)
                 }
-                .setNegativeButton("Cancel", null)
-                .show()
+            }
+
+            dialog.show()
         }
+    }
+
+    private fun renameNote(doc: DocumentFile, adapter: BaseAdapter) {
+        val input = EditText(this)
+
+        val currentName = doc.name ?: ""
+        val nameWithoutExtension = currentName.substringBeforeLast('.')
+
+        input.setText(nameWithoutExtension)
+        input.setSelection(input.text.length)
+
+        val padding = (16 * resources.displayMetrics.density).toInt()
+        input.setPadding(padding, padding, padding, padding)
+
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.rename_note))
+            .setView(input)
+            .setPositiveButton(getString(R.string.rename)) { _, _ ->
+                val raw = input.text.toString().trim()
+
+                if (raw.isEmpty()) {
+                    toast(getString(R.string.name_cannot_be_empty))
+                    return@setPositiveButton
+                }
+
+                val newName = buildNewName(raw, currentName)
+
+                lifecycleScope.launch {
+                    saveCurrentNoteNow()
+
+                    val oldUri = doc.uri
+
+                    val renamed = withContext(Dispatchers.IO) {
+                        try {
+                            doc.renameTo(newName)
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
+
+                    if (renamed) {
+                        if (currentNoteUri == oldUri) {
+                            currentNoteUri = doc.uri
+                            saveLastNoteUri(doc.uri)
+                        }
+
+                        val lastUriString = prefs.getString(KEY_LAST_NOTE_URI, null)
+                        if (lastUriString == oldUri.toString()) {
+                            saveLastNoteUri(doc.uri)
+                        }
+
+                        adapter.notifyDataSetChanged()
+                        toast(getString(R.string.renamed))
+                    } else {
+                        toast(getString(R.string.rename_failed))
+                    }
+                }
+            }
+            .setNegativeButton(getString(R.string.cancel), null)
+            .show()
     }
 
     private suspend fun createFileInTree(tree: DocumentFile, name: String): DocumentFile? {
@@ -459,6 +563,26 @@ class MainActivity : ComponentActivity() {
     private fun newNoteName(): String {
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         return "note-$stamp.txt"
+    }
+
+    private fun buildNewName(raw: String, originalName: String): String {
+        var name = raw.trim().replace("/", "-")
+
+        if (name.isEmpty()) {
+            return name
+        }
+
+        if (name.contains('.')) {
+            return name
+        }
+
+        val extension = originalName.substringAfterLast('.', "")
+
+        return if (extension.isNotEmpty()) {
+            "$name.$extension"
+        } else {
+            "$name.txt"
+        }
     }
 
     private fun readText(uri: Uri): String? {
@@ -525,6 +649,39 @@ class MainActivity : ComponentActivity() {
 
         runOnUiThread {
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private inner class NotesAdapter(
+        private val notes: List<DocumentFile>,
+        private val onRename: (DocumentFile, BaseAdapter) -> Unit
+    ) : BaseAdapter() {
+
+        override fun getCount(): Int = notes.size
+
+        override fun getItem(position: Int): Any = notes[position]
+
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val view = convertView ?: layoutInflater.inflate(
+                R.layout.note_list_item,
+                parent,
+                false
+            )
+
+            val nameView = view.findViewById<TextView>(R.id.note_name)
+            val renameButton = view.findViewById<ImageButton>(R.id.rename_button)
+
+            val document = notes[position]
+
+            nameView.text = document.name ?: getString(R.string.note)
+
+            renameButton.setOnClickListener {
+                onRename(document, this@NotesAdapter)
+            }
+
+            return view
         }
     }
 }
