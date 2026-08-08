@@ -9,6 +9,7 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
@@ -48,9 +49,14 @@ class MainActivity : ComponentActivity() {
 
         private const val MAX_UNDO_STEPS = 80
         private const val UNDO_GROUP_MS = 500L
+
+        private const val TOP_INSET_RATIO = 0.45f
     }
 
     private lateinit var editText: EditText
+    private lateinit var noteScroll: ObservableScrollView
+    private lateinit var fastScroller: View
+    private lateinit var scrollThumb: View
 
     private var currentNoteUri: Uri? = null
     private var saveJob: Job? = null
@@ -71,11 +77,14 @@ class MainActivity : ComponentActivity() {
                     redoStack.clear()
                     invalidateOptionsMenu()
                 }
+
                 pushUndoSnapshot(s?.toString() ?: "", count, after)
             }
         }
 
-        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+            // No action needed.
+        }
 
         override fun afterTextChanged(s: Editable?) {
             if (!isProgrammaticTextChange && !isLoading) {
@@ -127,7 +136,18 @@ class MainActivity : ComponentActivity() {
         setActionBar(findViewById<Toolbar>(R.id.toolbar))
         actionBar?.setDisplayShowTitleEnabled(false)
 
+        noteScroll = findViewById(R.id.note_scroll)
+        fastScroller = findViewById(R.id.fast_scroller)
+        scrollThumb = findViewById(R.id.scroll_thumb)
         editText = findViewById(R.id.note_edit)
+
+        setupEditorTopPadding()
+        setupFastScroller()
+
+        noteScroll.onScrollChangedListener = { scrollY, maxScroll ->
+            updateFastScroller(scrollY, maxScroll)
+        }
+
         editText.addTextChangedListener(textWatcher)
 
         if (savedInstanceState != null) {
@@ -157,6 +177,10 @@ class MainActivity : ComponentActivity() {
             } else {
                 pickFolder(true)
             }
+        }
+
+        fastScroller.post {
+            updateFastScroller(noteScroll.scrollY, noteScroll.getMaxScroll())
         }
     }
 
@@ -188,7 +212,7 @@ class MainActivity : ComponentActivity() {
 
         menu.findItem(R.id.action_undo)?.isEnabled = undoStack.isNotEmpty()
         menu.findItem(R.id.action_redo)?.isEnabled = redoStack.isNotEmpty()
-        
+
         return true
     }
 
@@ -234,23 +258,99 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun setupEditorTopPadding() {
+        val basePadding = (16 * resources.displayMetrics.density).toInt()
+        val topInset = (resources.displayMetrics.heightPixels * TOP_INSET_RATIO).toInt()
+
+        editText.setPadding(
+            basePadding,
+            topInset,
+            basePadding,
+            basePadding
+        )
+    }
+
+    private fun setupFastScroller() {
+        fastScroller.setOnTouchListener { _, event ->
+            val maxScroll = noteScroll.getMaxScroll()
+
+            if (maxScroll <= 0) {
+                return@setOnTouchListener false
+            }
+
+            when (event.action) {
+                MotionEvent.ACTION_DOWN,
+                MotionEvent.ACTION_MOVE -> {
+                    val thumbHeight = scrollThumb.height
+                    val trackHeight = fastScroller.height - thumbHeight
+
+                    if (trackHeight <= 0) {
+                        return@setOnTouchListener false
+                    }
+
+                    val y = (event.y - thumbHeight / 2f)
+                        .coerceIn(0f, trackHeight.toFloat())
+
+                    val fraction = y / trackHeight
+                    val targetScroll = (fraction * maxScroll).toInt()
+
+                    noteScroll.scrollTo(0, targetScroll)
+                    true
+                }
+
+                else -> false
+            }
+        }
+    }
+
+    private fun updateFastScroller(scrollY: Int, maxScroll: Int) {
+        if (maxScroll <= 0) {
+            fastScroller.visibility = View.INVISIBLE
+            return
+        }
+
+        fastScroller.visibility = View.VISIBLE
+
+        val thumbHeight = scrollThumb.height
+        val trackHeight = fastScroller.height - thumbHeight
+
+        if (trackHeight <= 0) {
+            return
+        }
+
+        val fraction = scrollY.toFloat() / maxScroll.toFloat()
+        val thumbY = (fraction * trackHeight).coerceIn(0f, trackHeight.toFloat())
+
+        scrollThumb.y = thumbY
+    }
+
     private fun hasTreePermission(): Boolean {
         val treeUri = getTreeUri() ?: return false
+
         return contentResolver.persistedUriPermissions.any {
             it.uri == treeUri && it.isReadPermission && it.isWritePermission
         }
     }
 
-    private fun getTreeUri(): Uri? = prefs.getString(KEY_TREE_URI, null)?.let(Uri::parse)
+    private fun getTreeUri(): Uri? {
+        return prefs.getString(KEY_TREE_URI, null)?.let(Uri::parse)
+    }
 
-    private fun getTree(): DocumentFile? = getTreeUri()?.let { DocumentFile.fromTreeUri(this, it) }
+    private fun getTree(): DocumentFile? {
+        return getTreeUri()?.let { DocumentFile.fromTreeUri(this, it) }
+    }
 
     private fun saveLastNoteUri(uri: Uri) {
-        prefs.edit().putString(KEY_LAST_NOTE_URI, uri.toString()).apply()
+        prefs.edit()
+            .putString(KEY_LAST_NOTE_URI, uri.toString())
+            .apply()
     }
 
     private fun pickFolder(showMessage: Boolean) {
-        if (showMessage) toast(getString(R.string.folder_needed))
+        if (showMessage) {
+            toast(getString(R.string.folder_needed))
+        }
+
         pickFolderLauncher.launch(null)
     }
 
@@ -262,108 +362,199 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun saveNow() {
+        saveJob?.cancel()
+        lifecycleScope.launch {
+            saveCurrentNoteNow()
+        }
+    }
+
     private suspend fun saveCurrentNoteNow() {
         val uri = currentNoteUri ?: return
-        val text = withContext(Dispatchers.Main) { editText.text.toString() }
-        if (text == lastSavedText) return
 
-        val success = withContext(Dispatchers.IO) { writeText(uri, text) }
-        if (success) lastSavedText = text
-        else withContext(Dispatchers.Main) { toast(getString(R.string.save_failed_choose_folder)) }
+        val text = withContext(Dispatchers.Main) {
+            editText.text.toString()
+        }
+
+        if (text == lastSavedText) {
+            return
+        }
+
+        val success = withContext(Dispatchers.IO) {
+            writeText(uri, text)
+        }
+
+        if (success) {
+            lastSavedText = text
+        } else {
+            withContext(Dispatchers.Main) {
+                toast(getString(R.string.save_failed_choose_folder))
+            }
+        }
     }
 
     private fun saveCurrentNoteBlocking() {
         val uri = currentNoteUri ?: return
         val text = editText.text.toString()
-        if (text == lastSavedText) return
 
-        val success = runBlocking(Dispatchers.IO) { writeText(uri, text) }
-        if (success) lastSavedText = text
+        if (text == lastSavedText) {
+            return
+        }
+
+        val success = runBlocking(Dispatchers.IO) {
+            writeText(uri, text)
+        }
+
+        if (success) {
+            lastSavedText = text
+        }
     }
 
     private fun openLastOrCreateNote() {
         lifecycleScope.launch {
-            if (!hasTreePermission()) { pickFolder(true); return@launch }
+            if (!hasTreePermission()) {
+                pickFolder(true)
+                return@launch
+            }
+
             val tree = getTree() ?: return@launch
 
             val lastUri = prefs.getString(KEY_LAST_NOTE_URI, null)?.let(Uri::parse)
+
             if (lastUri != null) {
                 val exists = withContext(Dispatchers.IO) {
                     DocumentFile.fromSingleUri(this@MainActivity, lastUri)?.exists() == true
                 }
-                if (exists && openNoteInternal(lastUri, saveCurrentFirst = false)) return@launch
+
+                if (exists && openNoteInternal(lastUri, saveCurrentFirst = false)) {
+                    return@launch
+                }
             }
 
-            val quickNote = withContext(Dispatchers.IO) { tree.findFile(DEFAULT_NOTE_NAME) }
+            val quickNote = withContext(Dispatchers.IO) {
+                tree.findFile(DEFAULT_NOTE_NAME)
+            }
+
             if (quickNote != null && quickNote.isFile) {
-                if (openNoteInternal(quickNote.uri, saveCurrentFirst = false)) return@launch
+                if (openNoteInternal(quickNote.uri, saveCurrentFirst = false)) {
+                    return@launch
+                }
             }
 
             val created = createFileInTree(tree, DEFAULT_NOTE_NAME)
-            if (created == null) { toast(getString(R.string.could_not_create_note)); return@launch }
+
+            if (created == null) {
+                toast(getString(R.string.could_not_create_note))
+                return@launch
+            }
 
             currentNoteUri = created.uri
             saveLastNoteUri(created.uri)
+
             setTextWithoutWatcher("")
             clearHistory()
             lastSavedText = ""
+
             setCursorEndAndShowKeyboard()
         }
     }
 
     private suspend fun openNoteInternal(uri: Uri, saveCurrentFirst: Boolean = true): Boolean {
-        if (saveCurrentFirst) saveCurrentNoteNow()
-        val text = withContext(Dispatchers.IO) { readText(uri) } ?: return false
+        if (saveCurrentFirst) {
+            saveCurrentNoteNow()
+        }
+
+        val text = withContext(Dispatchers.IO) {
+            readText(uri)
+        }
+
+        if (text == null) {
+            return false
+        }
 
         currentNoteUri = uri
         saveLastNoteUri(uri)
+
         setTextWithoutWatcher(text)
         clearHistory()
+
         lastSavedText = text
+
         setCursorEndAndShowKeyboard()
+
         return true
     }
 
     private fun openNote(uri: Uri) {
         lifecycleScope.launch {
-            if (!openNoteInternal(uri)) toast(getString(R.string.could_not_open_note))
+            if (!openNoteInternal(uri)) {
+                toast(getString(R.string.could_not_open_note))
+            }
         }
     }
 
     private fun createNewNote() {
         lifecycleScope.launch {
             saveCurrentNoteNow()
-            if (!hasTreePermission()) { pickFolder(true); return@launch }
+
+            if (!hasTreePermission()) {
+                pickFolder(true)
+                return@launch
+            }
+
             val tree = getTree() ?: return@launch
 
             val doc = createFileInTree(tree, newNoteName())
-            if (doc == null) { toast(getString(R.string.could_not_create_note)); return@launch }
+
+            if (doc == null) {
+                toast(getString(R.string.could_not_create_note))
+                return@launch
+            }
 
             currentNoteUri = doc.uri
             saveLastNoteUri(doc.uri)
+
             setTextWithoutWatcher("")
             clearHistory()
+
             lastSavedText = ""
+
             setCursorEndAndShowKeyboard()
         }
     }
 
     private fun createNewNoteWithCurrentText() {
         lifecycleScope.launch {
-            if (!hasTreePermission()) { pickFolder(true); return@launch }
+            if (!hasTreePermission()) {
+                pickFolder(true)
+                return@launch
+            }
+
             val tree = getTree() ?: return@launch
 
             val doc = createFileInTree(tree, newNoteName())
-            if (doc == null) { toast(getString(R.string.could_not_create_note)); return@launch }
+
+            if (doc == null) {
+                toast(getString(R.string.could_not_create_note))
+                return@launch
+            }
 
             currentNoteUri = doc.uri
             saveLastNoteUri(doc.uri)
             clearHistory()
+
             val text = editText.text.toString()
 
-            val success = withContext(Dispatchers.IO) { writeText(doc.uri, text) }
-            if (success) lastSavedText = text
-            else toast(getString(R.string.save_failed_choose_folder))
+            val success = withContext(Dispatchers.IO) {
+                writeText(doc.uri, text)
+            }
+
+            if (success) {
+                lastSavedText = text
+            } else {
+                toast(getString(R.string.save_failed_choose_folder))
+            }
+
             setCursorEndAndShowKeyboard()
         }
     }
@@ -371,7 +562,12 @@ class MainActivity : ComponentActivity() {
     private fun showNotes() {
         lifecycleScope.launch {
             saveCurrentNoteNow()
-            if (!hasTreePermission()) { pickFolder(true); return@launch }
+
+            if (!hasTreePermission()) {
+                pickFolder(true)
+                return@launch
+            }
+
             val tree = getTree() ?: return@launch
 
             val docs = withContext(Dispatchers.IO) {
@@ -383,14 +579,18 @@ class MainActivity : ComponentActivity() {
                                 .thenByDescending { it.name?.lowercase(Locale.US) ?: "" }
                         )
                         .toMutableList()
-                } catch (e: Exception) { mutableListOf<DocumentFile>() }
+                } catch (e: Exception) {
+                    mutableListOf<DocumentFile>()
+                }
             }
 
-            if (docs.isEmpty()) { toast(getString(R.string.no_notes_found)); return@launch }
+            if (docs.isEmpty()) {
+                toast(getString(R.string.no_notes_found))
+                return@launch
+            }
 
             val listView = ListView(this@MainActivity)
             listView.itemsCanFocus = false
-            // Set standard layout params to prevent horizontal resizing flicker
             listView.layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -418,17 +618,17 @@ class MainActivity : ComponentActivity() {
 
             dialog = builder.create()
             dialog.window?.setGravity(Gravity.BOTTOM)
-            
-            // Let Android handle the height natively. It will automatically limit the height 
-            // and enable scrolling without the manual measurement flicker.
             dialog.show()
         }
     }
 
     private fun renameNote(doc: DocumentFile, adapter: BaseAdapter) {
         val input = EditText(this)
+
         val currentName = doc.name ?: ""
-        input.setText(currentName.substringBeforeLast('.'))
+        val nameWithoutExtension = currentName.substringBeforeLast('.')
+
+        input.setText(nameWithoutExtension)
         input.setSelection(input.text.length)
 
         val padding = (16 * resources.displayMetrics.density).toInt()
@@ -439,18 +639,37 @@ class MainActivity : ComponentActivity() {
             .setView(input)
             .setPositiveButton(getString(R.string.rename)) { _, _ ->
                 val raw = input.text.toString().trim()
-                if (raw.isEmpty()) { toast(getString(R.string.name_cannot_be_empty)); return@setPositiveButton }
+
+                if (raw.isEmpty()) {
+                    toast(getString(R.string.name_cannot_be_empty))
+                    return@setPositiveButton
+                }
 
                 val newName = buildNewName(raw, currentName)
+
                 lifecycleScope.launch {
                     saveCurrentNoteNow()
+
                     val oldUri = doc.uri
-                    val renamed = withContext(Dispatchers.IO) { try { doc.renameTo(newName) } catch (e: Exception) { false } }
+
+                    val renamed = withContext(Dispatchers.IO) {
+                        try {
+                            doc.renameTo(newName)
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
 
                     if (renamed) {
-                        if (currentNoteUri == oldUri) { currentNoteUri = doc.uri; saveLastNoteUri(doc.uri) }
+                        if (currentNoteUri == oldUri) {
+                            currentNoteUri = doc.uri
+                            saveLastNoteUri(doc.uri)
+                        }
+
                         val lastUriString = prefs.getString(KEY_LAST_NOTE_URI, null)
-                        if (lastUriString == oldUri.toString()) saveLastNoteUri(doc.uri)
+                        if (lastUriString == oldUri.toString()) {
+                            saveLastNoteUri(doc.uri)
+                        }
 
                         adapter.notifyDataSetChanged()
                         toast(getString(R.string.renamed))
@@ -464,12 +683,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private suspend fun createFileInTree(tree: DocumentFile, name: String): DocumentFile? {
-        return withContext(Dispatchers.IO) { try { tree.createFile(MIME_TEXT, name) } catch (e: Exception) { null } }
+        return withContext(Dispatchers.IO) {
+            try {
+                tree.createFile(MIME_TEXT, name)
+            } catch (e: Exception) {
+                null
+            }
+        }
     }
 
     private fun isTextFile(file: DocumentFile): Boolean {
         val name = file.name?.lowercase(Locale.US) ?: return false
-        return name.endsWith(".txt") || name.endsWith(".md") || file.type?.startsWith("text/") == true
+
+        return name.endsWith(".txt") ||
+                name.endsWith(".md") ||
+                file.type?.startsWith("text/") == true
     }
 
     private fun newNoteName(): String {
@@ -479,23 +707,51 @@ class MainActivity : ComponentActivity() {
 
     private fun buildNewName(raw: String, originalName: String): String {
         var name = raw.trim().replace("/", "-")
-        if (name.isEmpty()) return name
-        if (name.contains('.')) return name
+
+        if (name.isEmpty()) {
+            return name
+        }
+
+        if (name.contains('.')) {
+            return name
+        }
 
         val extension = originalName.substringAfterLast('.', "")
-        return if (extension.isNotEmpty()) "$name.$extension" else "$name.txt"
+
+        return if (extension.isNotEmpty()) {
+            "$name.$extension"
+        } else {
+            "$name.txt"
+        }
     }
 
     private fun readText(uri: Uri): String? {
-        return try { contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } } catch (e: Exception) { null }
+        return try {
+            contentResolver.openInputStream(uri)?.bufferedReader()?.use {
+                it.readText()
+            }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun writeText(uri: Uri, text: String): Boolean {
         return try {
-            val outputStream = try { contentResolver.openOutputStream(uri, "wt") } catch (e: Exception) { contentResolver.openOutputStream(uri) }
-            outputStream?.use { output -> output.write(text.toByteArray(Charsets.UTF_8)); output.flush() } ?: return false
+            val outputStream = try {
+                contentResolver.openOutputStream(uri, "wt")
+            } catch (e: Exception) {
+                contentResolver.openOutputStream(uri)
+            }
+
+            outputStream?.use { output ->
+                output.write(text.toByteArray(Charsets.UTF_8))
+                output.flush()
+            } ?: return false
+
             true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun pushUndoSnapshot(oldText: String, count: Int, after: Int) {
@@ -503,7 +759,10 @@ class MainActivity : ComponentActivity() {
         val isLargeChange = count > 1 || after > 1
         val last = undoStack.lastOrNull()
 
-        if (last == oldText && !isLargeChange) return
+        if (last == oldText && !isLargeChange) {
+            return
+        }
+
         if (undoStack.isEmpty() || isLargeChange || now - lastHistoryPushTime > UNDO_GROUP_MS) {
             addToUndoStack(oldText)
             lastHistoryPushTime = now
@@ -511,16 +770,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun addToUndoStack(text: String) {
-        if (undoStack.isNotEmpty() && undoStack.last() == text) return
+        if (undoStack.isNotEmpty() && undoStack.last() == text) {
+            return
+        }
+
         undoStack.addLast(text)
-        while (undoStack.size > MAX_UNDO_STEPS) undoStack.removeFirst()
+
+        while (undoStack.size > MAX_UNDO_STEPS) {
+            undoStack.removeFirst()
+        }
+
         invalidateOptionsMenu()
     }
 
     private fun addToRedoStack(text: String) {
-        if (redoStack.isNotEmpty() && redoStack.last() == text) return
+        if (redoStack.isNotEmpty() && redoStack.last() == text) {
+            return
+        }
+
         redoStack.addLast(text)
-        while (redoStack.size > MAX_UNDO_STEPS) redoStack.removeFirst()
+
+        while (redoStack.size > MAX_UNDO_STEPS) {
+            redoStack.removeFirst()
+        }
+
         invalidateOptionsMenu()
     }
 
@@ -532,32 +805,50 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun undo() {
-        if (undoStack.isEmpty()) return
+        if (undoStack.isEmpty()) {
+            return
+        }
+
         val current = editText.text.toString()
         val previous = undoStack.removeLast()
+
         addToRedoStack(current)
 
         val selection = editText.selectionStart.coerceAtLeast(0)
+
         setTextWithoutWatcher(previous)
-        editText.setSelection(selection.coerceIn(0, previous.length))
+
+        val safeSelection = selection.coerceIn(0, previous.length)
+        editText.setSelection(safeSelection)
+        editText.bringPointIntoView(safeSelection)
 
         lastHistoryPushTime = 0L
+
         showKeyboard()
         scheduleSave()
         invalidateOptionsMenu()
     }
 
     private fun redo() {
-        if (redoStack.isEmpty()) return
+        if (redoStack.isEmpty()) {
+            return
+        }
+
         val current = editText.text.toString()
         val next = redoStack.removeLast()
+
         addToUndoStack(current)
 
         val selection = editText.selectionStart.coerceAtLeast(0)
+
         setTextWithoutWatcher(next)
-        editText.setSelection(selection.coerceIn(0, next.length))
+
+        val safeSelection = selection.coerceIn(0, next.length)
+        editText.setSelection(safeSelection)
+        editText.bringPointIntoView(safeSelection)
 
         lastHistoryPushTime = 0L
+
         showKeyboard()
         scheduleSave()
         invalidateOptionsMenu()
@@ -566,16 +857,31 @@ class MainActivity : ComponentActivity() {
     private fun setTextWithoutWatcher(text: String) {
         isLoading = true
         isProgrammaticTextChange = true
+
         editText.removeTextChangedListener(textWatcher)
         editText.setText(text)
         editText.addTextChangedListener(textWatcher)
+
         isLoading = false
         isProgrammaticTextChange = false
     }
 
     private fun setCursorEndAndShowKeyboard() {
         editText.post {
-            try { editText.setSelection(editText.text.length) } catch (_: Exception) {}
+            val length = editText.text.length
+
+            try {
+                editText.setSelection(length)
+            } catch (_: Exception) {
+                // Ignore cursor positioning errors in unusual states.
+            }
+
+            if (length == 0) {
+                noteScroll.scrollTo(0, 0)
+            } else {
+                editText.bringPointIntoView(length)
+            }
+
             editText.requestFocus()
             showKeyboard()
         }
@@ -587,8 +893,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun toast(message: String) {
-        if (isFinishing || isDestroyed) return
-        runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+        if (isFinishing || isDestroyed) {
+            return
+        }
+
+        runOnUiThread {
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private inner class NotesAdapter(
@@ -598,19 +909,32 @@ class MainActivity : ComponentActivity() {
     ) : BaseAdapter() {
 
         override fun getCount(): Int = notes.size
+
         override fun getItem(position: Int): Any = notes[position]
+
         override fun getItemId(position: Int): Long = position.toLong()
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val view = convertView ?: layoutInflater.inflate(R.layout.note_list_item, parent, false)
+            val view = convertView ?: layoutInflater.inflate(
+                R.layout.note_list_item,
+                parent,
+                false
+            )
+
             val nameView = view.findViewById<TextView>(R.id.note_name)
             val renameButton = view.findViewById<ImageButton>(R.id.rename_button)
+
             val document = notes[position]
 
             nameView.text = document.name ?: getString(R.string.note)
 
-            view.setOnClickListener { onOpen(document) }
-            renameButton.setOnClickListener { onRename(document, this@NotesAdapter) }
+            view.setOnClickListener {
+                onOpen(document)
+            }
+
+            renameButton.setOnClickListener {
+                onRename(document, this@NotesAdapter)
+            }
 
             return view
         }
