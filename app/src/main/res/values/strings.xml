@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">QuickNotes</string>
+
+    <string name="new_note">New</string>
+    <string name="notes">Notes</string>
+    <string name="save">Save</string>
+    <string name="choose_folder">Choose folder</string>
+
+    <string name="hint_write">Write quickly…</string>
+
+    <string name="folder_needed">
+        QuickNotes needs access to a folder to save notes.
+    </string>
+</resources>
