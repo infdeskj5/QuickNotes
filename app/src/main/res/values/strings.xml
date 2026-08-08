@@ -13,6 +13,7 @@
     </string>
 
     <string name="saved">Saved</string>
+
     <string name="save_failed_choose_folder">
         Save failed. Choose the notes folder again.
     </string>
@@ -41,4 +42,7 @@
     </string>
 
     <string name="note">Note</string>
+
+    <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
 </resources>
