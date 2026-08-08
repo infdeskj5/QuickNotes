@@ -202,11 +202,13 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
-    override fun onPrepareOptionsMenu(menu: Menu) {
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
         super.onPrepareOptionsMenu(menu)
 
         menu.findItem(R.id.action_undo)?.isEnabled = undoStack.isNotEmpty()
         menu.findItem(R.id.action_redo)?.isEnabled = redoStack.isNotEmpty()
+        
+        return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -639,7 +641,7 @@ class MainActivity : ComponentActivity() {
             }
 
             val item = adapter.getView(i, null, listView)
-            item.measure(widthSpec, View.MeasureSpec.UNSPECED)
+            item.measure(widthSpec, View.MeasureSpec.UNSPECIFIED)
 
             totalHeight += item.measuredHeight
 
