@@ -4,22 +4,24 @@
     <item
         android:id="@+id/action_new"
         android:title="@string/new_note"
-        android:showAsAction="ifRoom|withText" />
+        android:showAsAction="always|withText" />
 
     <item
         android:id="@+id/action_undo"
+        android:icon="@drawable/ic_undo"
         android:title="@string/undo"
-        android:showAsAction="ifRoom|withText" />
+        android:showAsAction="always" />
 
     <item
         android:id="@+id/action_redo"
+        android:icon="@drawable/ic_redo"
         android:title="@string/redo"
-        android:showAsAction="ifRoom|withText" />
+        android:showAsAction="always" />
 
     <item
         android:id="@+id/action_save"
         android:title="@string/save"
-        android:showAsAction="ifRoom|withText" />
+        android:showAsAction="always|withText" />
 
     <item
         android:id="@+id/action_notes"
