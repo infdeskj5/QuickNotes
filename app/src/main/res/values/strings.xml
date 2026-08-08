@@ -11,4 +11,34 @@
     <string name="folder_needed">
         QuickNotes needs access to a folder to save notes.
     </string>
+
+    <string name="saved">Saved</string>
+    <string name="save_failed_choose_folder">
+        Save failed. Choose the notes folder again.
+    </string>
+
+    <string name="could_not_create_note">
+        Could not create a note in the selected folder.
+    </string>
+
+    <string name="could_not_open_note">
+        Could not open note.
+    </string>
+
+    <string name="no_notes_found">
+        No notes found in this folder.
+    </string>
+
+    <string name="cancel">Cancel</string>
+
+    <string name="rename">Rename</string>
+    <string name="rename_note">Rename note</string>
+    <string name="name_cannot_be_empty">Name cannot be empty.</string>
+    <string name="renamed">Renamed.</string>
+
+    <string name="rename_failed">
+        Rename failed. This folder provider may not allow renaming.
+    </string>
+
+    <string name="note">Note</string>
 </resources>
