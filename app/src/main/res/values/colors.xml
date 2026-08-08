@@ -1,0 +1,6 @@
+<resources>
+    <color name="background">#121212</color>
+    <color name="surface">#1E1E1E</color>
+    <color name="text_primary">#E0E0E0</color>
+    <color name="text_hint">#9E9E9E</color>
+</resources>
