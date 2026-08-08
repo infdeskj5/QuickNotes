@@ -1,14 +1,44 @@
-name: Android CI
+name: Android Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag"
+        required: true
+        default: "v1.0.0"
+
+      release_name:
+        description: "Release title, optional"
+        required: false
+        default: ""
+
+      body:
+        description: "Release notes"
+        required: false
+        default: "Manual QuickNotes build."
+
+      draft:
+        description: "Create as draft"
+        type: boolean
+        required: false
+        default: false
+
+      prerelease:
+        description: "Mark as prerelease"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Java
@@ -21,5 +51,34 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
 
-      - name: Build debug APK
+      - name: Build APK
         run: ./gradlew assembleDebug
+
+      - name: Prepare release asset
+        env:
+          INPUT_TAG: ${{ inputs.tag_name }}
+          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+        run: |
+          SAFE_TAG=$(echo "$INPUT_TAG" | tr ' /' '--')
+          APK_NAME="QuickNotes-${SAFE_TAG}.apk"
+          RELEASE_NAME="$INPUT_RELEASE_NAME"
+
+          if [ -z "$RELEASE_NAME" ]; then
+            RELEASE_NAME="$INPUT_TAG"
+          fi
+
+          cp app/build/outputs/apk/debug/app-debug.apk "$APK_NAME"
+
+          echo "APK_NAME=$APK_NAME" >> "$GITHUB_ENV"
+          echo "RELEASE_NAME=$RELEASE_NAME" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: ${{ env.RELEASE_NAME }}
+          body: ${{ inputs.body }}
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          files: ${{ env.APK_NAME }}
+          fail_on_unmatched_files: true
