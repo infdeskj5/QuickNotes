@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/action_new"
+        android:title="@string/new_note"
+        android:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_save"
+        android:title="@string/save"
+        android:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_notes"
+        android:title="@string/notes"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_folder"
+        android:title="@string/choose_folder"
+        android:showAsAction="never" />
+
+</menu>
