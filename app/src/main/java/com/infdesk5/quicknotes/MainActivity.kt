@@ -56,7 +56,9 @@ class MainActivity : ComponentActivity() {
         private const val UNDO_GROUP_MS = 500L
 
         private const val TOP_INSET_RATIO = 0.45f
-        private const val SCROLL_TO_END_TIMEOUT_MS = 800L
+        private const val SCROLL_TO_END_TIMEOUT_MS = 1200L
+
+        private const val NOTES_DIALOG_MAX_HEIGHT_RATIO = 0.65f
     }
 
     private lateinit var rootLayout: View
@@ -79,6 +81,11 @@ class MainActivity : ComponentActivity() {
     private var lastHistoryPushTime = 0L
     private val undoStack = ArrayDeque<String>()
     private val redoStack = ArrayDeque<String>()
+
+    private var notesDialog: AlertDialog? = null
+    private var notesListAdapter: NotesAdapter? = null
+    private var isLoadingNotes = false
+    private val cachedNotes = mutableListOf<DocumentFile>()
 
     private val prefs by lazy { getPreferences(MODE_PRIVATE) }
 
@@ -138,6 +145,9 @@ class MainActivity : ComponentActivity() {
                     .remove(KEY_LAST_NOTE_URI)
                     .apply()
             }
+
+            cachedNotes.clear()
+            notesListAdapter?.notifyDataSetChanged()
 
             if (currentNoteUri == null && editText.text.toString().isNotEmpty()) {
                 createNewNoteWithCurrentText()
@@ -220,6 +230,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (notesDialog?.isShowing == true) {
+            notesDialog?.dismiss()
+        }
+
         rootLayout.viewTreeObserver.removeOnGlobalLayoutListener(globalLayoutListener)
         super.onDestroy()
     }
@@ -419,10 +433,21 @@ class MainActivity : ComponentActivity() {
     private fun requestScrollToEnd() {
         scrollToEndUntil = System.currentTimeMillis() + SCROLL_TO_END_TIMEOUT_MS
         scrollToEndWhenKeyboardVisible = true
+
         scrollToEndIfRequested()
+
+        noteScroll.postDelayed({ scrollToEndIfRequested() }, 50)
+        noteScroll.postDelayed({ scrollToEndIfRequested() }, 150)
+        noteScroll.postDelayed({ scrollToEndIfRequested() }, 300)
+        noteScroll.postDelayed({ scrollToEndIfRequested() }, 600)
+        noteScroll.postDelayed({ scrollToEndIfRequested() }, 900)
     }
 
     private fun scrollToEndIfRequested() {
+        if (isFinishing || isDestroyed) {
+            return
+        }
+
         if (System.currentTimeMillis() < scrollToEndUntil) {
             scrollToEnd()
         }
@@ -671,16 +696,69 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showNotes() {
-        lifecycleScope.launch {
-            saveCurrentNoteNow()
+        if (!hasTreePermission()) {
+            pickFolder(true)
+            return
+        }
 
-            if (!hasTreePermission()) {
-                pickFolder(true)
-                return@launch
+        val tree = getTree() ?: return
+
+        showNotesDialog()
+        refreshNotesList(tree)
+    }
+
+    private fun showNotesDialog() {
+        if (notesDialog?.isShowing == true) {
+            return
+        }
+
+        val listView = MaxHeightListView(this)
+        listView.maxHeight =
+            (resources.displayMetrics.heightPixels * NOTES_DIALOG_MAX_HEIGHT_RATIO).toInt()
+        listView.itemsCanFocus = false
+        listView.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        val adapter = NotesAdapter(
+            notes = cachedNotes,
+            onOpen = { doc ->
+                notesDialog?.dismiss()
+                openNote(doc.uri)
+            },
+            onRename = { doc, listAdapter ->
+                renameNote(doc, listAdapter)
             }
+        )
 
-            val tree = getTree() ?: return@launch
+        listView.adapter = adapter
+        notesListAdapter = adapter
 
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.notes))
+            .setView(listView)
+            .setNegativeButton(getString(R.string.cancel), null)
+            .create()
+
+        dialog.window?.setGravity(Gravity.BOTTOM)
+        dialog.setOnDismissListener {
+            notesDialog = null
+            notesListAdapter = null
+        }
+
+        notesDialog = dialog
+        dialog.show()
+    }
+
+    private fun refreshNotesList(tree: DocumentFile) {
+        if (isLoadingNotes) {
+            return
+        }
+
+        isLoadingNotes = true
+
+        lifecycleScope.launch {
             val docs = withContext(Dispatchers.IO) {
                 try {
                     tree.listFiles()
@@ -695,41 +773,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            cachedNotes.clear()
+            cachedNotes.addAll(docs)
+            notesListAdapter?.notifyDataSetChanged()
+
+            isLoadingNotes = false
+
             if (docs.isEmpty()) {
                 toast(getString(R.string.no_notes_found))
-                return@launch
             }
-
-            val listView = ListView(this@MainActivity)
-            listView.itemsCanFocus = false
-            listView.layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-
-            var dialog: AlertDialog? = null
-
-            val adapter = NotesAdapter(
-                notes = docs,
-                onOpen = { doc ->
-                    dialog?.dismiss()
-                    openNote(doc.uri)
-                },
-                onRename = { doc, listAdapter ->
-                    renameNote(doc, listAdapter)
-                }
-            )
-
-            listView.adapter = adapter
-
-            val builder = AlertDialog.Builder(this@MainActivity)
-                .setTitle(getString(R.string.notes))
-                .setView(listView)
-                .setNegativeButton(getString(R.string.cancel), null)
-
-            dialog = builder.create()
-            dialog.window?.setGravity(Gravity.BOTTOM)
-            dialog.show()
         }
     }
 
@@ -988,6 +1040,8 @@ class MainActivity : ComponentActivity() {
             }
 
             if (length == 0) {
+                scrollToEndUntil = 0L
+                scrollToEndWhenKeyboardVisible = false
                 noteScroll.scrollTo(0, 0)
             } else {
                 requestScrollToEnd()
