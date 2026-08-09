@@ -6,15 +6,18 @@ import android.net.Uri
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.ActionMode
 import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.TextView
@@ -22,6 +25,8 @@ import android.widget.Toast
 import android.widget.Toolbar
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -51,8 +56,10 @@ class MainActivity : ComponentActivity() {
         private const val UNDO_GROUP_MS = 500L
 
         private const val TOP_INSET_RATIO = 0.45f
+        private const val SCROLL_TO_END_TIMEOUT_MS = 800L
     }
 
+    private lateinit var rootLayout: View
     private lateinit var editText: EditText
     private lateinit var noteScroll: ObservableScrollView
     private lateinit var fastScroller: View
@@ -64,11 +71,21 @@ class MainActivity : ComponentActivity() {
     private var isProgrammaticTextChange = false
     private var lastSavedText = ""
 
+    private var isTextSelectionActionMode = false
+
+    private var scrollToEndUntil = 0L
+    private var scrollToEndWhenKeyboardVisible = false
+
     private var lastHistoryPushTime = 0L
     private val undoStack = ArrayDeque<String>()
     private val redoStack = ArrayDeque<String>()
 
     private val prefs by lazy { getPreferences(MODE_PRIVATE) }
+
+    private val globalLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+        scrollToEndIfRequested()
+        updateFastScroller(noteScroll.scrollY, noteScroll.getMaxScroll())
+    }
 
     private val textWatcher = object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
@@ -136,16 +153,34 @@ class MainActivity : ComponentActivity() {
         setActionBar(findViewById<Toolbar>(R.id.toolbar))
         actionBar?.setDisplayShowTitleEnabled(false)
 
+        rootLayout = findViewById(R.id.root_layout)
         noteScroll = findViewById(R.id.note_scroll)
         fastScroller = findViewById(R.id.fast_scroller)
         scrollThumb = findViewById(R.id.scroll_thumb)
         editText = findViewById(R.id.note_edit)
 
+        noteScroll.setSmoothScrollingEnabled(false)
+        editText.setShowSoftInputOnFocus(false)
+
         setupEditorTopPadding()
         setupFastScroller()
+        setupClickToFocus()
 
         noteScroll.onScrollChangedListener = { scrollY, maxScroll ->
             updateFastScroller(scrollY, maxScroll)
+        }
+
+        rootLayout.viewTreeObserver.addOnGlobalLayoutListener(globalLayoutListener)
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
+            if (insets.isVisible(WindowInsetsCompat.Type.ime()) && scrollToEndWhenKeyboardVisible) {
+                noteScroll.post {
+                    scrollToEnd()
+                }
+                scrollToEndWhenKeyboardVisible = false
+            }
+
+            ViewCompat.onApplyWindowInsets(view, insets)
         }
 
         editText.addTextChangedListener(textWatcher)
@@ -184,6 +219,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        rootLayout.viewTreeObserver.removeOnGlobalLayoutListener(globalLayoutListener)
+        super.onDestroy()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString(KEY_CURRENT_NOTE_URI, currentNoteUri?.toString())
@@ -200,6 +240,26 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         saveCurrentNoteBlocking()
         super.onStop()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.action == MotionEvent.ACTION_DOWN) {
+            scrollToEndUntil = 0L
+            scrollToEndWhenKeyboardVisible = false
+        }
+
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun onActionModeStarted(mode: ActionMode?) {
+        super.onActionModeStarted(mode)
+        isTextSelectionActionMode = true
+        hideKeyboard()
+    }
+
+    override fun onActionModeFinished(mode: ActionMode?) {
+        super.onActionModeFinished(mode)
+        isTextSelectionActionMode = false
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -268,6 +328,37 @@ class MainActivity : ComponentActivity() {
             basePadding,
             basePadding
         )
+
+        val layoutParams = fastScroller.layoutParams as? FrameLayout.LayoutParams
+        if (layoutParams != null) {
+            layoutParams.topMargin = topInset
+            fastScroller.layoutParams = layoutParams
+        }
+    }
+
+    private fun setupClickToFocus() {
+        val noteContent = findViewById<View>(R.id.note_content)
+
+        noteContent.setOnClickListener {
+            if (!isTextSelectionActionMode) {
+                editText.requestFocus()
+
+                val length = editText.text.length
+                try {
+                    editText.setSelection(length)
+                } catch (_: Exception) {
+                    // Ignore cursor positioning errors.
+                }
+
+                showKeyboard()
+            }
+        }
+
+        editText.setOnClickListener {
+            if (!isTextSelectionActionMode) {
+                showKeyboard()
+            }
+        }
     }
 
     private fun setupFastScroller() {
@@ -315,6 +406,7 @@ class MainActivity : ComponentActivity() {
         val trackHeight = fastScroller.height - thumbHeight
 
         if (trackHeight <= 0) {
+            fastScroller.visibility = View.INVISIBLE
             return
         }
 
@@ -322,6 +414,25 @@ class MainActivity : ComponentActivity() {
         val thumbY = (fraction * trackHeight).coerceIn(0f, trackHeight.toFloat())
 
         scrollThumb.y = thumbY
+    }
+
+    private fun requestScrollToEnd() {
+        scrollToEndUntil = System.currentTimeMillis() + SCROLL_TO_END_TIMEOUT_MS
+        scrollToEndWhenKeyboardVisible = true
+        scrollToEndIfRequested()
+    }
+
+    private fun scrollToEndIfRequested() {
+        if (System.currentTimeMillis() < scrollToEndUntil) {
+            scrollToEnd()
+        }
+    }
+
+    private fun scrollToEnd() {
+        val maxScroll = noteScroll.getMaxScroll()
+        if (maxScroll > 0) {
+            noteScroll.scrollTo(0, maxScroll)
+        }
     }
 
     private fun hasTreePermission(): Boolean {
@@ -873,13 +984,13 @@ class MainActivity : ComponentActivity() {
             try {
                 editText.setSelection(length)
             } catch (_: Exception) {
-                // Ignore cursor positioning errors in unusual states.
+                // Ignore cursor positioning errors.
             }
 
             if (length == 0) {
                 noteScroll.scrollTo(0, 0)
             } else {
-                editText.bringPointIntoView(length)
+                requestScrollToEnd()
             }
 
             editText.requestFocus()
@@ -888,8 +999,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showKeyboard() {
+        if (isTextSelectionActionMode) {
+            return
+        }
+
         val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
         imm.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun hideKeyboard() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(editText.windowToken, 0)
     }
 
     private fun toast(message: String) {
