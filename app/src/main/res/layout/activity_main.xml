@@ -88,7 +88,7 @@
                 android:id="@+id/search_close"
                 android:layout_width="36dp"
                 android:layout_height="36dp"
-                android:src="@android:drawable/ic_menu_close_clear_clear_text"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/close" />
 
