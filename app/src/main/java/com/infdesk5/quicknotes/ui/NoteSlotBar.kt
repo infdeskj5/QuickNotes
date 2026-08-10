@@ -140,7 +140,7 @@ class NoteSlotBar @JvmOverloads constructor(
                     if (!isDragging) {
                         val dx = abs(event.rawX - initialRawX)
                         if (dx > dp(10)) {
-                            cancelLongPress()
+                            cancelPendingLongPress() // Renamed here
                         }
                     }
                     if (isDragging) {
@@ -151,7 +151,7 @@ class NoteSlotBar @JvmOverloads constructor(
                 }
 
                 MotionEvent.ACTION_UP -> {
-                    cancelLongPress()
+                    cancelPendingLongPress() // Renamed here
                     if (isDragging) {
                         endDrag()
                         true
@@ -161,7 +161,7 @@ class NoteSlotBar @JvmOverloads constructor(
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
-                    cancelLongPress()
+                    cancelPendingLongPress() // Renamed here
                     if (isDragging) {
                         endDrag()
                     }
@@ -203,7 +203,8 @@ class NoteSlotBar @JvmOverloads constructor(
         requestDisallowInterceptTouchEvent(true)
     }
 
-    private fun cancelLongPress() {
+    // Renamed from cancelLongPress to avoid conflict with View.cancelLongPress()
+    private fun cancelPendingLongPress() {
         longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
         longPressRunnable = null
     }
