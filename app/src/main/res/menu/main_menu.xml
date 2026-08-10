@@ -29,6 +29,11 @@
         android:showAsAction="never" />
 
     <item
+        android:id="@+id/action_top_height"
+        android:title="@string/top_height"
+        android:showAsAction="never" />
+
+    <item
         android:id="@+id/action_folder"
         android:title="@string/choose_folder"
         android:showAsAction="never" />
