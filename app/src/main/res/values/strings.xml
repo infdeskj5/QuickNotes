@@ -1,9 +1,9 @@
 <resources>
     <string name="app_name">QuickNotes</string>
-
     <string name="new_note">+</string>
     <string name="notes">Notes</string>
     <string name="save">Save</string>
+    <string name="settings">Settings</string>
     <string name="choose_folder">Choose folder</string>
     <string name="search_in_note">Search</string>
     <string name="search_hint">Search…</string>
@@ -11,9 +11,9 @@
     <string name="previous">Previous</string>
     <string name="next">Next</string>
     <string name="close">Close</string>
+    <string name="create">Create</string>
 
     <string name="hint_write">Write quickly…</string>
-
     <string name="folder_needed">QuickNotes needs access to a folder to save notes.</string>
     <string name="saved">Saved</string>
     <string name="save_failed_choose_folder">Save failed. Choose the notes folder again.</string>
@@ -40,6 +40,9 @@
 
     <string name="top_height">Top height</string>
     <string name="top_height_value">%1$d%%</string>
+    <string name="scroller_size">Scroller size</string>
+    <string name="scroller_size_value">%1$d%%</string>
+    <string name="max_slots">Max slots</string>
 
     <string name="storage_mode">Storage: %1$s</string>
     <string name="storage_local">Local</string>
@@ -52,7 +55,7 @@
     <string name="backup_imported">Backup imported</string>
     <string name="backup_failed">Backup operation failed</string>
 
-    <string name="app_color">App color</string>
+    <string name="app_color">App color (Hex)</string>
     <string name="keyboard_on_select">Keyboard on text select</string>
 
     <string name="slot_config">Configure slots</string>
