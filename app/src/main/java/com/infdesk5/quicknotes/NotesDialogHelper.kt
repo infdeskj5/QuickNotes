@@ -142,7 +142,7 @@ class NotesDialogHelper(
 
         for (i in 0 until count) {
             val item = adapter.getView(i, null, listView)
-            item.measure(widthSpec, View.MeasureSpec.UNSPECED)
+            item.measure(widthSpec, View.MeasureSpec.UNSPECIFIED)
 
             totalHeight += item.measuredHeight
 
