@@ -6,6 +6,10 @@ import com.infdesk5.quicknotes.model.Note
 import com.infdesk5.quicknotes.model.NoteMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 enum class StorageMode { LOCAL, EXTERNAL }
 
@@ -21,16 +25,18 @@ class NoteManager(
         private const val KEY_APP_COLOR = "app_color"
         private const val KEY_KEYBOARD_ON_SELECT = "keyboard_on_select"
         private const val KEY_SCROLLER_SIZE = "scroller_size"
-        
-        // Vivid Dark Green
-        private const val DEFAULT_APP_COLOR = 0xFF1E8E3E.toInt() 
+        private const val KEY_SHOW_SCROLLER = "show_scroller"
+
+        private const val DEFAULT_APP_COLOR = 0xFF1E8E3E.toInt()
     }
 
     val localRepo = LocalNoteRepository(context)
     val externalRepo = ExternalNoteRepository(context, getTreeUri())
 
     var storageMode: StorageMode
-        get() = StorageMode.valueOf(prefs.getString(KEY_STORAGE_MODE, StorageMode.LOCAL.name) ?: StorageMode.LOCAL.name)
+        get() = StorageMode.valueOf(
+            prefs.getString(KEY_STORAGE_MODE, StorageMode.LOCAL.name) ?: StorageMode.LOCAL.name
+        )
         set(value) = prefs.edit().putString(KEY_STORAGE_MODE, value.name).apply()
 
     val activeRepository: NoteRepository
@@ -52,6 +58,10 @@ class NoteManager(
     var scrollerSizePercent: Int
         get() = prefs.getInt(KEY_SCROLLER_SIZE, 100)
         set(value) = prefs.edit().putInt(KEY_SCROLLER_SIZE, value).apply()
+
+    var showScroller: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_SCROLLER, true)
+        set(value) = prefs.edit().putBoolean(KEY_SHOW_SCROLLER, value).apply()
 
     var keyboardOnSelect: Boolean
         get() = prefs.getBoolean(KEY_KEYBOARD_ON_SELECT, false)
@@ -75,7 +85,7 @@ class NoteManager(
 
     suspend fun listNotes(): List<Note> = activeRepository.listNotes()
     suspend fun readNote(note: Note): String? = activeRepository.readNote(note)
-    
+
     suspend fun writeNote(note: Note, content: String): Boolean {
         val success = activeRepository.writeNote(note, content)
         if (success) note.lastModified = System.currentTimeMillis()
@@ -96,8 +106,8 @@ class NoteManager(
             if (localMatch == null) {
                 val content = externalRepo.readNote(extNote)
                 if (content != null) {
-                    localRepo.createNote(extNote.name)?.let { 
-                        localRepo.writeNote(it, content); copied++ 
+                    localRepo.createNote(extNote.name)?.let {
+                        localRepo.writeNote(it, content); copied++
                     }
                 }
             } else if (extNote.lastModified > localMatch.lastModified) {
@@ -110,13 +120,82 @@ class NoteManager(
         for (localNote in localNotes) {
             if (externalNotes.none { it.name == localNote.name }) {
                 localRepo.readNote(localNote)?.let { content ->
-                    externalRepo.createNote(localNote.name)?.let { 
-                        externalRepo.writeNote(it, content); copied++ 
+                    externalRepo.createNote(localNote.name)?.let {
+                        externalRepo.writeNote(it, content); copied++
                     }
                 }
             }
         }
         SyncResult(copied, updated)
+    }
+
+    // Export backup to EXTERNAL folder /backups
+    suspend fun exportBackup(): String? = withContext(Dispatchers.IO) {
+        try {
+            val tree = externalRepo.getTree() ?: return@withContext null
+            val backupsDir = tree.findFile("backups") ?: tree.createDirectory("backups")
+            ?: return@withContext null
+
+            val timestamp = System.currentTimeMillis()
+            val fileName = "quicknotes_backup_$timestamp.zip"
+            val backupFile = backupsDir.createFile("application/zip", fileName)
+            ?: return@withContext null
+
+            val notes = localRepo.listNotes()
+            val baos = ByteArrayOutputStream()
+
+            ZipOutputStream(baos).use { zip ->
+                for (note in notes) {
+                    val content = localRepo.readNote(note) ?: continue
+                    zip.putNextEntry(ZipEntry(note.name))
+                    zip.write(content.toByteArray(Charsets.UTF_8))
+                    zip.closeEntry()
+                }
+            }
+
+            context.contentResolver.openOutputStream(backupFile.uri)?.use { os ->
+                os.write(baos.toByteArray())
+                os.flush()
+            }
+
+            "backups/$fileName"
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // Import backup from EXTERNAL folder /backups
+    suspend fun importBackup(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val tree = externalRepo.getTree() ?: return@withContext false
+            val backupsDir = tree.findFile("backups") ?: return@withContext false
+
+            val backups = backupsDir.listFiles()
+                .filter { it.name?.endsWith(".zip") == true }
+                .sortedByDescending { it.lastModified() }
+
+            if (backups.isEmpty()) return@withContext false
+
+            val latestBackup = backups.first()
+            val inputStream = context.contentResolver.openInputStream(latestBackup.uri)
+            ?: return@withContext false
+
+            ZipInputStream(inputStream).use { zip ->
+                var entry = zip.nextEntry
+                while (entry != null) {
+                    val content = zip.readBytes().toString(Charsets.UTF_8)
+                    val note = localRepo.createNote(entry.name)
+                        ?: localRepo.listNotes().find { it.name == entry.name }
+                    if (note != null) {
+                        localRepo.writeNote(note, content)
+                    }
+                    entry = zip.nextEntry
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     data class SyncResult(val copied: Int, val updated: Int)
