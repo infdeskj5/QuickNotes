@@ -47,7 +47,7 @@
         <LinearLayout
             android:id="@+id/search_bar"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="48dp"
             android:orientation="horizontal"
             android:background="@color/surface"
             android:padding="4dp"
@@ -88,7 +88,7 @@
                 android:id="@+id/search_close"
                 android:layout_width="36dp"
                 android:layout_height="36dp"
-                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:src="@android:drawable/ic_menu_close_clear_clear_text"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/close" />
 
@@ -98,7 +98,7 @@
         <com.infdesk5.quicknotes.ui.NoteSlotBar
             android:id="@+id/note_slot_bar"
             android:layout_width="match_parent"
-            android:layout_height="44dp"
+            android:layout_height="48dp"
             android:background="@color/surface" />
 
         <!-- Bottom Toolbar -->
@@ -113,14 +113,14 @@
 
     </LinearLayout>
 
-    <!-- Fast Scroller -->
+    <!-- Fast Scroller (Lifted to avoid overlapping the 48dp slot bar + 56dp toolbar) -->
     <FrameLayout
         android:id="@+id/fast_scroller"
         android:layout_width="24dp"
         android:layout_height="match_parent"
         android:layout_gravity="end|top"
         android:layout_marginEnd="2dp"
-        android:layout_marginBottom="?android:attr/actionBarSize"
+        android:layout_marginBottom="108dp"
         android:visibility="invisible">
 
         <View
