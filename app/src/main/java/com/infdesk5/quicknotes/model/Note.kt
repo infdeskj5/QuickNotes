@@ -3,7 +3,7 @@ package com.infdesk5.quicknotes.model
 import android.net.Uri
 
 data class Note(
-    val id: String,
+    var id: String, // Changed from val to var
     var name: String,
     var uri: Uri?,
     var localPath: String? = null,
