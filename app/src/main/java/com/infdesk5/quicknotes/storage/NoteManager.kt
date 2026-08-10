@@ -4,10 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.infdesk5.quicknotes.model.Note
 import com.infdesk5.quicknotes.model.NoteMetadata
-import com.infdesk5.quicknotes.model.NoteMetaEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 
 enum class StorageMode { LOCAL, EXTERNAL }
 
@@ -22,7 +20,10 @@ class NoteManager(
         private const val KEY_TOP_INSET_PERCENT = "top_inset_percent"
         private const val KEY_APP_COLOR = "app_color"
         private const val KEY_KEYBOARD_ON_SELECT = "keyboard_on_select"
-        private const val DEFAULT_APP_COLOR = 0xFF00FF7F.toInt() // Neon green
+        private const val KEY_SCROLLER_SIZE = "scroller_size"
+        
+        // Vivid Dark Green
+        private const val DEFAULT_APP_COLOR = 0xFF1E8E3E.toInt() 
     }
 
     val localRepo = LocalNoteRepository(context)
@@ -48,6 +49,10 @@ class NoteManager(
         get() = prefs.getInt(KEY_TOP_INSET_PERCENT, 45)
         set(value) = prefs.edit().putInt(KEY_TOP_INSET_PERCENT, value).apply()
 
+    var scrollerSizePercent: Int
+        get() = prefs.getInt(KEY_SCROLLER_SIZE, 100)
+        set(value) = prefs.edit().putInt(KEY_SCROLLER_SIZE, value).apply()
+
     var keyboardOnSelect: Boolean
         get() = prefs.getBoolean(KEY_KEYBOARD_ON_SELECT, false)
         set(value) = prefs.edit().putBoolean(KEY_KEYBOARD_ON_SELECT, value).apply()
@@ -68,87 +73,50 @@ class NoteManager(
         prefs.edit().putString(KEY_METADATA, metadata.toJson()).apply()
     }
 
-    suspend fun listNotes(): List<Note> {
-        return activeRepository.listNotes()
-    }
-
-    suspend fun readNote(note: Note): String? {
-        return activeRepository.readNote(note)
-    }
-
+    suspend fun listNotes(): List<Note> = activeRepository.listNotes()
+    suspend fun readNote(note: Note): String? = activeRepository.readNote(note)
+    
     suspend fun writeNote(note: Note, content: String): Boolean {
         val success = activeRepository.writeNote(note, content)
-        if (success) {
-            note.lastModified = System.currentTimeMillis()
-        }
+        if (success) note.lastModified = System.currentTimeMillis()
         return success
     }
 
-    suspend fun createNote(name: String): Note? {
-        return activeRepository.createNote(name)
-    }
-
-    suspend fun deleteNote(note: Note): Boolean {
-        return activeRepository.deleteNote(note)
-    }
-
-    suspend fun renameNote(note: Note, newName: String): Boolean {
-        return activeRepository.renameNote(note, newName)
-    }
+    suspend fun createNote(name: String): Note? = activeRepository.createNote(name)
+    suspend fun deleteNote(note: Note): Boolean = activeRepository.deleteNote(note)
+    suspend fun renameNote(note: Note, newName: String): Boolean = activeRepository.renameNote(note, newName)
 
     suspend fun syncNotes(): SyncResult = withContext(Dispatchers.IO) {
         val localNotes = localRepo.listNotes()
         val externalNotes = externalRepo.listNotes()
+        var copied = 0; var updated = 0
 
-        var copied = 0
-        var updated = 0
-
-        // Copy external notes that don't exist locally
         for (extNote in externalNotes) {
             val localMatch = localNotes.find { it.name == extNote.name }
             if (localMatch == null) {
                 val content = externalRepo.readNote(extNote)
                 if (content != null) {
-                    val newNote = localRepo.createNote(extNote.name)
-                    if (newNote != null) {
-                        localRepo.writeNote(newNote, content)
-                        copied++
+                    localRepo.createNote(extNote.name)?.let { 
+                        localRepo.writeNote(it, content); copied++ 
                     }
                 }
-            } else {
-                // Update the older one
-                if (extNote.lastModified > localMatch.lastModified) {
-                    val content = externalRepo.readNote(extNote)
-                    if (content != null) {
-                        localRepo.writeNote(localMatch, content)
-                        updated++
-                    }
-                } else if (localMatch.lastModified > extNote.lastModified) {
-                    val content = localRepo.readNote(localMatch)
-                    if (content != null) {
-                        externalRepo.writeNote(extNote, content)
-                        updated++
-                    }
-                }
+            } else if (extNote.lastModified > localMatch.lastModified) {
+                externalRepo.readNote(extNote)?.let { localRepo.writeNote(localMatch, it); updated++ }
+            } else if (localMatch.lastModified > extNote.lastModified) {
+                localRepo.readNote(localMatch)?.let { externalRepo.writeNote(extNote, it); updated++ }
             }
         }
 
-        // Copy local notes that don't exist externally
         for (localNote in localNotes) {
-            val extMatch = externalNotes.find { it.name == localNote.name }
-            if (extMatch == null) {
-                val content = localRepo.readNote(localNote)
-                if (content != null) {
-                    val newNote = externalRepo.createNote(localNote.name)
-                    if (newNote != null) {
-                        externalRepo.writeNote(newNote, content)
-                        copied++
+            if (externalNotes.none { it.name == localNote.name }) {
+                localRepo.readNote(localNote)?.let { content ->
+                    externalRepo.createNote(localNote.name)?.let { 
+                        externalRepo.writeNote(it, content); copied++ 
                     }
                 }
             }
         }
-
-        SyncResult(copied = copied, updated = updated)
+        SyncResult(copied, updated)
     }
 
     data class SyncResult(val copied: Int, val updated: Int)
