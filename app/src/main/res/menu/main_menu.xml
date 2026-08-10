@@ -4,6 +4,18 @@
     <item
         android:id="@+id/action_new"
         android:title="@string/new_note"
+        android:icon="@android:drawable/ic_menu_add"
+        android:showAsAction="always" />
+
+    <item
+        android:id="@+id/action_search_note"
+        android:title="@string/search_in_note"
+        android:icon="@android:drawable/ic_menu_search"
+        android:showAsAction="always" />
+
+    <item
+        android:id="@+id/action_notes"
+        android:title="@string/notes"
         android:showAsAction="always|withText" />
 
     <item
@@ -21,16 +33,42 @@
     <item
         android:id="@+id/action_save"
         android:title="@string/save"
-        android:showAsAction="always|withText" />
-
-    <item
-        android:id="@+id/action_notes"
-        android:title="@string/notes"
-        android:showAsAction="never" />
+        android:showAsAction="ifRoom|withText" />
 
     <item
         android:id="@+id/action_top_height"
         android:title="@string/top_height"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_storage_mode"
+        android:title="@string/storage_mode"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_sync_notes"
+        android:title="@string/sync_notes"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_import_backup"
+        android:title="@string/import_backup"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_export_backup"
+        android:title="@string/export_backup"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_app_color"
+        android:title="@string/app_color"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_keyboard_on_select"
+        android:title="@string/keyboard_on_select"
+        android:checkable="true"
         android:showAsAction="never" />
 
     <item
