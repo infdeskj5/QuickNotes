@@ -42,6 +42,7 @@
     <string name="top_height_value">%1$d%%</string>
     <string name="scroller_size">Scroller size</string>
     <string name="scroller_size_value">%1$d%%</string>
+    <string name="show_scroller">Show right scroller</string>
     <string name="max_slots">Max slots</string>
 
     <string name="storage_mode">Storage: %1$s</string>
@@ -51,16 +52,13 @@
     <string name="sync_complete">Sync complete: %1$d copied, %2$d updated</string>
     <string name="import_backup">Import backup</string>
     <string name="export_backup">Export backup</string>
-    <string name="backup_exported">Backup exported</string>
+    <string name="backup_exported">Backup exported to %1$s</string>
     <string name="backup_imported">Backup imported</string>
     <string name="backup_failed">Backup operation failed</string>
 
     <string name="app_color">App color (Hex)</string>
     <string name="keyboard_on_select">Keyboard on text select</string>
 
-    <string name="slot_config">Configure slots</string>
-    <string name="slot_count">Number of slots</string>
-    <string name="note_slots">Note slots</string>
     <string name="assign_to_slot">Assign to slot</string>
     <string name="slot_color">Slot color</string>
 
