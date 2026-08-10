@@ -45,4 +45,7 @@
 
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
+
+    <string name="top_height">Top height</string>
+    <string name="top_height_value">%1$d%%</string>
 </resources>
