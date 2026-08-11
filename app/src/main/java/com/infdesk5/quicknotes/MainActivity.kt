@@ -474,9 +474,9 @@ class MainActivity : ComponentActivity() {
     private fun createNewNote() {
         val input = EditText(this)
         val defaultName = NoteUtils.newNoteName()
-        input.setText(defaultName)
-        val dotIndex = defaultName.lastIndexOf('.')
-        if (dotIndex > 0) input.setSelection(0, dotIndex) else input.selectAll()
+        val displayName = defaultName.removeSuffix(".txt").removeSuffix(".md")
+        input.setText(displayName)
+        input.selectAll()
 
         showBottomDialog(getString(R.string.new_note), wrapInPadding(input), getString(R.string.create)) {
             val name = input.text.toString().trim()
@@ -500,7 +500,7 @@ class MainActivity : ComponentActivity() {
             input.requestFocus()
             input.selectAll()
             showKeyboardFor(input)
-        }, 150)
+        }, 300)
     }
 
     private fun wrapInPadding(view: View): View {
@@ -610,7 +610,7 @@ class MainActivity : ComponentActivity() {
             input.requestFocus()
             input.selectAll()
             showKeyboardFor(input)
-        }, 150)
+        }, 300)
     }
 
     private fun createNoteShortcut(note: Note) {
