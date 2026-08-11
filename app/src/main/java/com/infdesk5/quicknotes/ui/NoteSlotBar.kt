@@ -152,22 +152,27 @@ class NoteSlotBar @JvmOverloads constructor(
     }
 
     private fun getDropIndex(x: Float): Int {
-        val slotViews = mutableListOf<View>()
+        var closestIndex = -1
+        var minDistance = Float.MAX_VALUE
+    
+        // Iterate through all children to find the closest slot center
         for (i in 0 until container.childCount) {
             val child = container.getChildAt(i)
-            if (child is TextView) {
-                slotViews.add(child)
+            
+            // Both populated and empty slots have integer tags (spacers do not)
+            val index = child.tag as? Int
+            if (index != null) {
+                val centerX = child.left + child.width / 2f
+                val distance = kotlin.math.abs(x - centerX)
+                
+                // Track the slot that is closest to the drop point
+                if (distance < minDistance) {
+                    minDistance = distance
+                    closestIndex = index
+                }
             }
         }
-
-        for (i in slotViews.indices) {
-            val view = slotViews[i]
-            val centerX = view.left + view.width / 2f
-            if (x < centerX) {
-                return i
-            }
-        }
-        return slotViews.size - 1
+        return if (closestIndex != -1) closestIndex else 0
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
