@@ -536,14 +536,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showNoteOptionsDialog(note: Note) {
-        val options = arrayOf(getString(R.string.assign_to_slot), getString(R.string.slot_color), getString(R.string.delete), getString(R.string.rename), getString(R.string.create_shortcut))
+        val options = arrayOf(getString(R.string.assign_to_slot), getString(R.string.delete), getString(R.string.rename), getString(R.string.create_shortcut))
         showBottomDialogSimple(note.displayName, options) { which ->
             when (which) {
                 0 -> assignNoteToSlot(note)
-                1 -> showSlotColorPicker(note)
-                2 -> deleteNote(note)
-                3 -> renameNote(note)
-                4 -> createNoteShortcut(note)
+                1 -> deleteNote(note)
+                2 -> renameNote(note)
+                3 -> createNoteShortcut(note)
             }
         }
     }
@@ -563,16 +562,6 @@ class MainActivity : ComponentActivity() {
                     saveNoteOrder()
                 }
             }
-        }
-    }
-
-    private fun showSlotColorPicker(note: Note) {
-        val colors = intArrayOf(0xFF1E8E3E.toInt(), 0xFFFF4444.toInt(), 0xFF4488FF.toInt(), 0xFFFFAA00.toInt(), 0xFFAA44FF.toInt(), 0xFF00FFFF.toInt(), 0xFFFF44AA.toInt(), 0xFFFFFFFF.toInt(), 0xFF333333.toInt())
-        val names = arrayOf("Green", "Red", "Blue", "Orange", "Purple", "Cyan", "Pink", "White", "Dark")
-        showBottomDialogSimple(getString(R.string.slot_color), names) { which ->
-            note.slotColor = colors[which]
-            updateSlotBar()
-            saveNoteOrder()
         }
     }
 
