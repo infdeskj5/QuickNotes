@@ -2,6 +2,12 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
 
     <item
+        android:id="@+id/action_save"
+        android:title="@string/save"
+        android:icon="@android:drawable/ic_menu_save"
+        android:showAsAction="always" />
+
+    <item
         android:id="@+id/action_new"
         android:title="@string/new_note"
         android:icon="@android:drawable/ic_menu_add"
@@ -31,13 +37,9 @@
         android:showAsAction="always" />
 
     <item
-        android:id="@+id/action_save"
-        android:title="@string/save"
-        android:showAsAction="ifRoom|withText" />
-
-    <item
         android:id="@+id/action_settings"
         android:title="@string/settings"
-        android:showAsAction="never" />
+        android:icon="@android:drawable/ic_menu_manage"
+        android:showAsAction="always" />
 
 </menu>
