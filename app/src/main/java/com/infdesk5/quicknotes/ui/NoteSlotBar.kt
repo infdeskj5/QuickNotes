@@ -41,8 +41,10 @@ class NoteSlotBar @JvmOverloads constructor(
     private var draggedView: TextView? = null
     private var draggedIndex = -1
     private var initialDragIndex = -1
-    private var startRawX = 0f
-    
+    private var dragStartRawX = 0f
+    private var lastKnownRawX = 0f
+    private var downRawX = 0f
+
     private val longPressHandler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
@@ -149,7 +151,10 @@ class NoteSlotBar @JvmOverloads constructor(
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                startRawX = ev.rawX
+                downRawX = ev.rawX
+                lastKnownRawX = ev.rawX
+                isDragging = false
+                
                 val slotView = findSlotViewAt(ev.x, ev.y)
                 if (slotView != null) {
                     draggedView = slotView
@@ -157,16 +162,16 @@ class NoteSlotBar @JvmOverloads constructor(
                     initialDragIndex = draggedIndex
                     
                     longPressRunnable = Runnable {
-                        isDragging = true
-                        draggedView?.elevation = 12f
-                        draggedView?.bringToFront()
-                        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        startDragging()
                     }
                     longPressHandler.postDelayed(longPressRunnable!!, ViewConfiguration.getLongPressTimeout().toLong())
+                } else {
+                    draggedView = null
                 }
             }
             MotionEvent.ACTION_MOVE -> {
-                val dx = abs(ev.rawX - startRawX)
+                lastKnownRawX = ev.rawX
+                val dx = abs(ev.rawX - downRawX)
                 if (dx > touchSlop) {
                     cancelPendingLongPress()
                     isDragging = false
@@ -186,10 +191,12 @@ class NoteSlotBar @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
+        lastKnownRawX = ev.rawX
+        
         if (isDragging) {
             when (ev.actionMasked) {
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = ev.rawX - startRawX
+                    val dx = ev.rawX - dragStartRawX
                     draggedView?.translationX = dx
                     
                     autoScrollIfNeeded(ev.rawX)
@@ -205,16 +212,28 @@ class NoteSlotBar @JvmOverloads constructor(
         }
         
         if (ev.actionMasked == MotionEvent.ACTION_UP) {
-            val slotView = findSlotViewAt(ev.x, ev.y)
-            if (slotView != null) {
-                val noteIndex = slotView.tag as Int
-                if (noteIndex < notes.size) {
-                    onSlotClick?.invoke(notes[noteIndex])
+            val dx = abs(ev.rawX - downRawX)
+            if (dx < touchSlop) {
+                val slotView = findSlotViewAt(ev.x, ev.y)
+                if (slotView != null) {
+                    val noteIndex = slotView.tag as Int
+                    if (noteIndex < notes.size) {
+                        onSlotClick?.invoke(notes[noteIndex])
+                    }
                 }
             }
         }
         
         return super.onTouchEvent(ev)
+    }
+
+    private fun startDragging() {
+        isDragging = true
+        dragStartRawX = lastKnownRawX
+        draggedView?.elevation = 12f
+        draggedView?.bringToFront()
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        parent?.requestDisallowInterceptTouchEvent(true)
     }
 
     private fun autoScrollIfNeeded(rawX: Float) {
@@ -234,21 +253,23 @@ class NoteSlotBar @JvmOverloads constructor(
     private fun checkAndShiftViews() {
         val dv = draggedView ?: return
         val slotViews = getSlotViews()
+        if (slotViews.isEmpty()) return
+
         val draggedCenter = dv.left + dv.translationX + dv.width / 2f
         
-        var newIndex = 0
+        var targetIndex = 0
         for (i in slotViews.indices) {
-            val other = slotViews[i]
-            val restingCenter = other.left + other.width / 2f
-            if (draggedCenter > restingCenter) {
-                newIndex = i
+            val view = slotViews[i]
+            val viewCenter = view.left + view.width / 2f
+            if (draggedCenter > viewCenter) {
+                targetIndex = i
             } else {
                 break
             }
         }
         
-        if (newIndex != draggedIndex) {
-            draggedIndex = newIndex
+        if (targetIndex != draggedIndex) {
+            draggedIndex = targetIndex
             updateShifts()
         }
     }
