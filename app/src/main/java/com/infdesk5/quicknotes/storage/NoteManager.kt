@@ -28,6 +28,7 @@ class NoteManager(
         private const val KEY_SHOW_SCROLLER = "show_scroller"
         private const val KEY_SEARCH_HIGHLIGHT = "search_highlight"
         private const val KEY_SEARCH_CURRENT_HIGHLIGHT = "search_current_highlight"
+        private const val KEY_SHOW_KEYBOARD_ON_OPEN = "show_keyboard_on_open_note"
 
         private const val DEFAULT_APP_COLOR = 0xFF1E8E3E.toInt()
     }
@@ -50,6 +51,10 @@ class NoteManager(
     var appColor: Int
         get() = prefs.getInt(KEY_APP_COLOR, DEFAULT_APP_COLOR)
         set(value) = prefs.edit().putInt(KEY_APP_COLOR, value).apply()
+        
+    var showKeyboardOnOpenNote: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_KEYBOARD_ON_OPEN, true)
+        set(value) = prefs.edit().putBoolean(KEY_SHOW_KEYBOARD_ON_OPEN, value).apply()
 
     var topInsetPercent: Int
         get() = prefs.getInt(KEY_TOP_INSET_PERCENT, 45)
