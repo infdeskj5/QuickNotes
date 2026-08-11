@@ -145,7 +145,6 @@ class MainActivity : ComponentActivity() {
         undoRedo.onAvailabilityChanged = { invalidateOptionsMenu() }
 
         noteScroll.setSmoothScrollingEnabled(false)
-        editText.setShowSoftInputOnFocus(false)
         applyTopInset()
         applyAppColor()
         applyScrollerSize()
@@ -1061,13 +1060,13 @@ class MainActivity : ComponentActivity() {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                editText.postDelayed({ showKeyboardForced() }, 300)
             }
         }
         editText.setOnClickListener {
             if (!isTextSelectionActionMode) {
-                editText.requestFocus()
-                editText.postDelayed({ showKeyboardForced() }, 300)
+                if (!editText.hasFocus()) {
+                    editText.requestFocus()
+                }
             }
         }
     }
