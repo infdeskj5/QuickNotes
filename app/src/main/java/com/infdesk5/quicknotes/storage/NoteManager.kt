@@ -26,6 +26,8 @@ class NoteManager(
         private const val KEY_KEYBOARD_ON_SELECT = "keyboard_on_select"
         private const val KEY_SCROLLER_SIZE = "scroller_size"
         private const val KEY_SHOW_SCROLLER = "show_scroller"
+        private const val KEY_SEARCH_HIGHLIGHT = "search_highlight"
+        private const val KEY_SEARCH_CURRENT_HIGHLIGHT = "search_current_highlight"
 
         private const val DEFAULT_APP_COLOR = 0xFF1E8E3E.toInt()
     }
@@ -34,9 +36,7 @@ class NoteManager(
     val externalRepo = ExternalNoteRepository(context, getTreeUri())
 
     var storageMode: StorageMode
-        get() = StorageMode.valueOf(
-            prefs.getString(KEY_STORAGE_MODE, StorageMode.LOCAL.name) ?: StorageMode.LOCAL.name
-        )
+        get() = StorageMode.valueOf(prefs.getString(KEY_STORAGE_MODE, StorageMode.LOCAL.name) ?: StorageMode.LOCAL.name)
         set(value) = prefs.edit().putString(KEY_STORAGE_MODE, value.name).apply()
 
     val activeRepository: NoteRepository
@@ -66,6 +66,14 @@ class NoteManager(
     var keyboardOnSelect: Boolean
         get() = prefs.getBoolean(KEY_KEYBOARD_ON_SELECT, false)
         set(value) = prefs.edit().putBoolean(KEY_KEYBOARD_ON_SELECT, value).apply()
+
+    var searchHighlightColor: Int
+        get() = prefs.getInt(KEY_SEARCH_HIGHLIGHT, 0x809C27B0.toInt()) // Default Purple
+        set(value) = prefs.edit().putInt(KEY_SEARCH_HIGHLIGHT, value).apply()
+
+    var searchCurrentHighlightColor: Int
+        get() = prefs.getInt(KEY_SEARCH_CURRENT_HIGHLIGHT, 0xCCE040FB.toInt()) // Default Bright Pink/Purple
+        set(value) = prefs.edit().putInt(KEY_SEARCH_CURRENT_HIGHLIGHT, value).apply()
 
     fun getTreeUri() = prefs.getString(KEY_TREE_URI, null)?.let { android.net.Uri.parse(it) }
 
@@ -129,7 +137,6 @@ class NoteManager(
         SyncResult(copied, updated)
     }
 
-    // Export backup to EXTERNAL folder /backups
     suspend fun exportBackup(): String? = withContext(Dispatchers.IO) {
         try {
             val tree = externalRepo.getTree() ?: return@withContext null
@@ -164,7 +171,6 @@ class NoteManager(
         }
     }
 
-    // Import backup from EXTERNAL folder /backups
     suspend fun importBackup(): Boolean = withContext(Dispatchers.IO) {
         try {
             val tree = externalRepo.getTree() ?: return@withContext false
