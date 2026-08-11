@@ -285,6 +285,7 @@ class MainActivity : ComponentActivity() {
             getString(R.string.search_highlight_color),
             getString(R.string.current_search_color),
             getString(R.string.keyboard_on_select),
+            getString(R.string.show_keyboard_on_open),   // <-- NEW (index 8)
             getString(R.string.storage_mode, if (noteManager.storageMode == StorageMode.LOCAL) getString(R.string.storage_local) else getString(R.string.storage_external)),
             getString(R.string.sync_notes),
             getString(R.string.import_backup),
@@ -355,11 +356,15 @@ class MainActivity : ComponentActivity() {
                 noteManager.keyboardOnSelect = !noteManager.keyboardOnSelect
                 toast(if (noteManager.keyboardOnSelect) "Enabled" else "Disabled")
             }
-            8 -> toggleStorageMode()
-            9 -> syncNotes()
-            10 -> importBackup()
-            11 -> exportBackup()
-            12 -> lifecycleScope.launch { saveCurrentNoteNow(); pickFolderLauncher.launch(null) }
+            8 -> {  // <-- NEW
+                noteManager.showKeyboardOnOpenNote = !noteManager.showKeyboardOnOpenNote
+                toast(if (noteManager.showKeyboardOnOpenNote) "Enabled" else "Disabled")
+            }
+            9 -> toggleStorageMode()
+            10 -> syncNotes()
+            11 -> importBackup()
+            12 -> exportBackup()
+            13 -> lifecycleScope.launch { saveCurrentNoteNow(); pickFolderLauncher.launch(null) }
         }
     }
 
@@ -446,8 +451,11 @@ class MainActivity : ComponentActivity() {
             noteScroll.scrollTo(0, noteScroll.getMaxScroll())
             editText.visibility = View.VISIBLE
             requestScrollToEnd()
-            editText.requestFocus()
-            showKeyboard()
+
+            if (noteManager.showKeyboardOnOpenNote) {
+                editText.requestFocus()
+                showKeyboard()
+            }
         }
         updateSlotBar()
     }
@@ -486,6 +494,13 @@ class MainActivity : ComponentActivity() {
                 refreshNotes()
             }
         }
+
+        // Pre-select and show keyboard
+        input.postDelayed({
+            input.requestFocus()
+            input.selectAll()
+            showKeyboardFor(input)
+        }, 150)
     }
 
     private fun wrapInPadding(view: View): View {
@@ -581,13 +596,21 @@ class MainActivity : ComponentActivity() {
     private fun renameNote(note: Note) {
         val input = EditText(this)
         input.setText(note.displayName)
-        input.setSelection(input.text.length)
+        input.selectAll() // Pre-select the entire name
+
         showBottomDialog(getString(R.string.rename_note), wrapInPadding(input), getString(R.string.rename)) {
             val newName = input.text.toString().trim()
             if (newName.isEmpty()) { toast(getString(R.string.name_cannot_be_empty)); return@showBottomDialog }
             val fullName = if (newName.contains('.')) newName else "$newName.txt"
             lifecycleScope.launch { noteManager.renameNote(note, fullName); refreshNotes(); updateSlotBar() }
         }
+
+        // Pre-select and show keyboard
+        input.postDelayed({
+            input.requestFocus()
+            input.selectAll()
+            showKeyboardFor(input)
+        }, 150)
     }
 
     private fun createNoteShortcut(note: Note) {
@@ -597,18 +620,29 @@ class MainActivity : ComponentActivity() {
                 val intent = Intent(this, MainActivity::class.java).apply {
                     action = Intent.ACTION_VIEW
                     putExtra(EXTRA_NOTE_ID, note.id)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                            Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
                 }
                 val size = (48 * resources.displayMetrics.density).toInt()
                 val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
                 val canvas = Canvas(bitmap)
-                val bgPaint = Paint().apply { color = noteManager.appColor; isAntiAlias = true }
+
+                // Black circular background
+                val bgPaint = Paint().apply { color = Color.BLACK; isAntiAlias = true }
                 canvas.drawCircle(size / 2f, size / 2f, size / 2f, bgPaint)
+
+                // Purple pen icon
                 val pencil = ContextCompat.getDrawable(this, android.R.drawable.ic_menu_edit)
-                pencil?.setTint(Color.WHITE)
+                pencil?.setTint(0xFF9C27B0.toInt()) // Purple
                 pencil?.setBounds(size / 4, size / 4, size * 3 / 4, size * 3 / 4)
                 pencil?.draw(canvas)
-                val shortcut = ShortcutInfo.Builder(this, note.id).setShortLabel(note.displayName).setIcon(android.graphics.drawable.Icon.createWithBitmap(bitmap)).setIntent(intent).build()
+
+                val shortcut = ShortcutInfo.Builder(this, note.id)
+                    .setShortLabel(note.displayName)
+                    .setIcon(android.graphics.drawable.Icon.createWithBitmap(bitmap))
+                    .setIntent(intent)
+                    .build()
+
                 manager.requestPinShortcut(shortcut, null)
                 toast(getString(R.string.shortcut_created))
             }
@@ -1040,9 +1074,13 @@ class MainActivity : ComponentActivity() {
     private fun setCursorEndAndShowKeyboard() {
         editText.post {
             try { editText.setSelection(editText.text.length) } catch (_: Exception) {}
-            if (editText.text.length == 0) { scrollToEndUntil = 0L; scrollToEndWhenKeyboardVisible = false; noteScroll.scrollTo(0, 0) } 
+            if (editText.text.length == 0) { scrollToEndUntil = 0L; scrollToEndWhenKeyboardVisible = false; noteScroll.scrollTo(0, 0) }
             else requestScrollToEnd()
-            editText.requestFocus(); showKeyboard()
+
+            if (noteManager.showKeyboardOnOpenNote) {
+                editText.requestFocus()
+                showKeyboard()
+            }
         }
     }
 
