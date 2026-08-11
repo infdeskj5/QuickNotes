@@ -208,6 +208,31 @@ class NoteManager(
             false
         }
     }
+    
+    suspend fun importBackupFromUri(uri: android.net.Uri): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val inputStream = context.contentResolver.openInputStream(uri)
+                ?: return@withContext false
+
+            ZipInputStream(inputStream).use { zip ->
+                var entry = zip.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        val content = zip.readBytes().toString(Charsets.UTF_8)
+                        val note = localRepo.createNote(entry.name)
+                            ?: localRepo.listNotes().find { it.name == entry.name }
+                        if (note != null) {
+                            localRepo.writeNote(note, content)
+                        }
+                    }
+                    entry = zip.nextEntry
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     data class SyncResult(val copied: Int, val updated: Int)
 }
