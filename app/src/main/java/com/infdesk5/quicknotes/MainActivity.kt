@@ -947,12 +947,19 @@ class MainActivity : ComponentActivity() {
     private fun undo() {
         val scrollY = noteScroll.scrollY
         val previous = undoRedo.undo(editText.text.toString()) ?: return
+
         setTextWithoutWatcher(previous)
-        
-        noteScroll.post {
-            noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
-        }
-        
+
+        // Restore scroll position using OnPreDrawListener to ensure it runs
+        // AFTER the EditText's internal scroll-to-cursor behavior
+        noteScroll.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                noteScroll.viewTreeObserver.removeOnPreDrawListener(this)
+                noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
+                return true
+            }
+        })
+
         scheduleSave()
         invalidateOptionsMenu()
     }
@@ -960,12 +967,17 @@ class MainActivity : ComponentActivity() {
     private fun redo() {
         val scrollY = noteScroll.scrollY
         val next = undoRedo.redo(editText.text.toString()) ?: return
+
         setTextWithoutWatcher(next)
-        
-        noteScroll.post {
-            noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
-        }
-        
+
+        noteScroll.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                noteScroll.viewTreeObserver.removeOnPreDrawListener(this)
+                noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
+                return true
+            }
+        })
+
         scheduleSave()
         invalidateOptionsMenu()
     }
