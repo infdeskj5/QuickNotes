@@ -114,6 +114,19 @@ class MainActivity : ComponentActivity() {
             if (!isProgrammaticTextChange && !isLoading) scheduleSave()
         }
     }
+    
+    private val importBackupLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                if (noteManager.importBackupFromUri(uri)) {
+                    toast(getString(R.string.backup_imported))
+                    refreshNotes()
+                } else {
+                    toast(getString(R.string.backup_failed))
+                }
+            }
+        }
 
     private val pickFolderLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
@@ -243,8 +256,14 @@ class MainActivity : ComponentActivity() {
         super.onActionModeStarted(mode)
         isTextSelectionActionMode = true
         if (noteManager.keyboardOnSelect) {
+            val selStart = editText.selectionStart
+            val selEnd = editText.selectionEnd
             showKeyboard()
-        } else if (!isKeyboardVisible()) {
+            // Restore selection after keyboard layout change
+            editText.post {
+                try { editText.setSelection(selStart, selEnd) } catch (_: Exception) {}
+            }
+        } else {
             hideKeyboard()
         }
     }
@@ -370,7 +389,7 @@ class MainActivity : ComponentActivity() {
             }
             9 -> toggleStorageMode()
             10 -> syncNotes()
-            11 -> importBackup()
+            11 -> importBackupLauncher.launch(arrayOf("application/zip"))
             12 -> exportBackup()
             13 -> lifecycleScope.launch { saveCurrentNoteNow(); pickFolderLauncher.launch(null) }
         }
@@ -458,11 +477,15 @@ class MainActivity : ComponentActivity() {
             try { editText.setSelection(text.length) } catch (_: Exception) {}
             noteScroll.scrollTo(0, noteScroll.getMaxScroll())
             editText.visibility = View.VISIBLE
-            requestScrollToEnd()
 
             if (noteManager.showKeyboardOnOpenNote) {
                 editText.requestFocus()
                 showKeyboard()
+                // Let the insets listener do ONE clean scroll when keyboard is fully shown
+                scrollToEndWhenKeyboardVisible = true
+            } else {
+                // No keyboard coming, one instant scroll is enough
+                scrollToEnd()
             }
         }
         updateSlotBar()
@@ -1033,7 +1056,8 @@ class MainActivity : ComponentActivity() {
         scrollToEndUntil = System.currentTimeMillis() + SCROLL_TO_END_TIMEOUT_MS
         scrollToEndWhenKeyboardVisible = true
         scrollToEndIfRequested()
-        for (d in listOf(50L, 150L, 300L, 600L, 900L)) noteScroll.postDelayed({ scrollToEndIfRequested() }, d)
+        // Only one fallback instead of six
+        noteScroll.postDelayed({ scrollToEndIfRequested() }, 400)
     }
 
     private fun scrollToEndIfRequested() {
@@ -1069,7 +1093,6 @@ class MainActivity : ComponentActivity() {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                editText.post { showKeyboard() }
             }
         }
         editText.setOnClickListener {
@@ -1077,7 +1100,6 @@ class MainActivity : ComponentActivity() {
                 if (!editText.hasFocus()) {
                     editText.requestFocus()
                 }
-                editText.post { showKeyboard() }
             }
         }
     }
@@ -1108,12 +1130,6 @@ class MainActivity : ComponentActivity() {
     private fun showKeyboard() {
         if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
-    }
-    
-    private fun showKeyboardForced() {
-        if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
-        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-            .showSoftInput(editText, InputMethodManager.SHOW_FORCED)
     }
 
     private fun showKeyboardFor(view: EditText) {
