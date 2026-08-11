@@ -69,6 +69,7 @@ class MainActivity : ComponentActivity() {
     // === Keyboard & Selection State ===
     private var isTextSelectionActionMode = false
     private var scrollToEndWhenKeyboardVisible = false
+    private var currentActionMode: ActionMode? = null
 
     // === Helpers ===
     private lateinit var keyboardHelper: KeyboardHelper
@@ -231,6 +232,9 @@ class MainActivity : ComponentActivity() {
                 } else if (editText.hasFocus() && !isTextSelectionActionMode) {
                     // User clicked somewhere and keyboard appeared, scroll to cursor
                     noteScroll.post { scrollToCursorAboveSlotBar() }
+                } else if (isTextSelectionActionMode) {
+                    // Keyboard appeared during selection, force menu to redraw on new layout
+                    editText.postDelayed({ currentActionMode?.invalidate() }, 100)
                 }
             }
             
@@ -312,27 +316,27 @@ class MainActivity : ComponentActivity() {
     override fun onActionModeStarted(mode: ActionMode?) {
         super.onActionModeStarted(mode)
         isTextSelectionActionMode = true
+        currentActionMode = mode
         
         if (noteManager.keyboardOnSelect) {
             val selStart = editText.selectionStart
             val selEnd = editText.selectionEnd
             
-            // Delay showing keyboard to let the ActionMode fully initialize
+            // Show keyboard immediately to start the layout resize
+            showKeyboard()
+            
+            // Restore selection and redraw menu after layout settles
             editText.postDelayed({
-                showKeyboard()
-                
-                // Restore selection if the system cleared it during the keyboard layout change
-                editText.postDelayed({
-                    if (editText.selectionStart == editText.selectionEnd || editText.selectionStart == -1) {
-                        try {
-                            editText.setSelection(
-                                selStart.coerceIn(0, editText.text.length),
-                                selEnd.coerceIn(0, editText.text.length)
-                            )
-                        } catch (_: Exception) {}
-                    }
-                }, 200)
-            }, 100)
+                if (editText.selectionStart == editText.selectionEnd || editText.selectionStart == -1) {
+                    try {
+                        editText.setSelection(
+                            selStart.coerceIn(0, editText.text.length),
+                            selEnd.coerceIn(0, editText.text.length)
+                        )
+                    } catch (_: Exception) {}
+                }
+                currentActionMode?.invalidate()
+            }, 300)
         } else {
             hideKeyboard()
         }
@@ -341,6 +345,9 @@ class MainActivity : ComponentActivity() {
     override fun onActionModeFinished(mode: ActionMode?) {
         super.onActionModeFinished(mode)
         isTextSelectionActionMode = false
+        if (currentActionMode == mode) {
+            currentActionMode = null
+        }
     }
 
     // ===========================
@@ -437,7 +444,7 @@ class MainActivity : ComponentActivity() {
 
             if (noteManager.showKeyboardOnOpenNote) {
                 editText.requestFocus()
-                keyboardHelper.showKeyboard(editText)
+                showKeyboard()
                 scrollToEndWhenKeyboardVisible = true
             } else {
                 scrollToEnd()
@@ -487,7 +494,7 @@ class MainActivity : ComponentActivity() {
         input.postDelayed({
             input.requestFocus()
             input.selectAll()
-            keyboardHelper.showKeyboard(input)
+            showKeyboardFor(input)
         }, 300)
     }
 
@@ -500,7 +507,7 @@ class MainActivity : ComponentActivity() {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                // Keyboard will show, insets listener will handle scroll
+                showKeyboard() // Ensure keyboard opens immediately
             }
         }
         editText.setOnClickListener {
@@ -508,10 +515,17 @@ class MainActivity : ComponentActivity() {
                 if (!editText.hasFocus()) {
                     editText.requestFocus()
                 }
-                // If keyboard is already visible, insets listener won't fire.
-                // So we manually scroll to the clicked position.
+                
                 if (isKeyboardVisible()) {
                     editText.postDelayed({ scrollToCursorAboveSlotBar() }, 100)
+                } else {
+                    // Delay showing the keyboard slightly to prevent flashing
+                    // in case this is the first tap of a double-tap word selection.
+                    editText.postDelayed({
+                        if (!isTextSelectionActionMode) {
+                            showKeyboard()
+                        }
+                    }, 200)
                 }
             }
         }
@@ -671,7 +685,9 @@ class MainActivity : ComponentActivity() {
         
         val targetScrollY = cursorAbsoluteY - targetYOnScreen
         
-        noteScroll.smoothScrollTo(0, targetScrollY.coerceAtLeast(0))
+        // Using undo/redo bounds logic to perfectly lock the scroll, 
+        // preventing the text from moving over the toolbar or below the slot bar.
+        noteScroll.smoothScrollTo(0, targetScrollY.coerceAtLeast(0).coerceAtMost(noteScroll.getMaxScroll()))
     }
 
     /**
@@ -686,7 +702,7 @@ class MainActivity : ComponentActivity() {
         val editTextTop = editText.top
         // Place cursor line at 70% from top → slightly above the slot bar
         val targetY = editTextTop + lineTop - (noteScroll.height * 0.7).toInt()
-        noteScroll.scrollTo(0, targetY.coerceAtLeast(0))
+        noteScroll.scrollTo(0, targetY.coerceAtLeast(0).coerceAtMost(noteScroll.getMaxScroll()))
     }
 
     private fun setCursorEndAndShowKeyboard() {
@@ -699,7 +715,7 @@ class MainActivity : ComponentActivity() {
             }
             if (noteManager.showKeyboardOnOpenNote) {
                 editText.requestFocus()
-                keyboardHelper.showKeyboard(editText)
+                showKeyboard()
                 scrollToEndWhenKeyboardVisible = true
             }
         }
