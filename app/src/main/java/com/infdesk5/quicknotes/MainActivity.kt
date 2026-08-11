@@ -222,10 +222,18 @@ class MainActivity : ComponentActivity() {
 
         // Keyboard insets listener: scroll to cursor when keyboard appears
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
-            if (insets.isVisible(WindowInsetsCompat.Type.ime()) && scrollToEndWhenKeyboardVisible) {
-                noteScroll.post { scrollToCursorLine() }
-                scrollToEndWhenKeyboardVisible = false
+            val isImeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
+            
+            if (isImeVisible) {
+                if (scrollToEndWhenKeyboardVisible) {
+                    noteScroll.post { scrollToEnd() }
+                    scrollToEndWhenKeyboardVisible = false
+                } else if (editText.hasFocus() && !isTextSelectionActionMode) {
+                    // User clicked somewhere and keyboard appeared, scroll to cursor
+                    noteScroll.post { scrollToCursorAboveSlotBar() }
+                }
             }
+            
             ViewCompat.onApplyWindowInsets(view, insets)
         }
 
@@ -304,18 +312,29 @@ class MainActivity : ComponentActivity() {
     override fun onActionModeStarted(mode: ActionMode?) {
         super.onActionModeStarted(mode)
         isTextSelectionActionMode = true
-
+        
         if (noteManager.keyboardOnSelect) {
-            // Show keyboard but preserve selection
             val selStart = editText.selectionStart
             val selEnd = editText.selectionEnd
-            keyboardHelper.showKeyboard(editText)
-            editText.post {
-                try { editText.setSelection(selStart, selEnd) } catch (_: Exception) {}
-            }
+            
+            // Delay showing keyboard to let the ActionMode fully initialize
+            editText.postDelayed({
+                showKeyboard()
+                
+                // Restore selection if the system cleared it during the keyboard layout change
+                editText.postDelayed({
+                    if (editText.selectionStart == editText.selectionEnd || editText.selectionStart == -1) {
+                        try {
+                            editText.setSelection(
+                                selStart.coerceIn(0, editText.text.length),
+                                selEnd.coerceIn(0, editText.text.length)
+                            )
+                        } catch (_: Exception) {}
+                    }
+                }, 200)
+            }, 100)
         } else {
-            // Hide keyboard during text selection
-            keyboardHelper.hideKeyboard(editText)
+            hideKeyboard()
         }
     }
 
@@ -481,7 +500,7 @@ class MainActivity : ComponentActivity() {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                editText.postDelayed({ keyboardHelper.showKeyboardForced(editText) }, 50)
+                // Keyboard will show, insets listener will handle scroll
             }
         }
         editText.setOnClickListener {
@@ -489,7 +508,11 @@ class MainActivity : ComponentActivity() {
                 if (!editText.hasFocus()) {
                     editText.requestFocus()
                 }
-                editText.postDelayed({ keyboardHelper.showKeyboardForced(editText) }, 50)
+                // If keyboard is already visible, insets listener won't fire.
+                // So we manually scroll to the clicked position.
+                if (isKeyboardVisible()) {
+                    editText.postDelayed({ scrollToCursorAboveSlotBar() }, 100)
+                }
             }
         }
     }
@@ -629,6 +652,26 @@ class MainActivity : ComponentActivity() {
     private fun scrollToEnd() {
         val maxScroll = noteScroll.getMaxScroll()
         if (maxScroll > 0) noteScroll.scrollTo(0, maxScroll)
+    }
+    
+    private fun scrollToCursorAboveSlotBar() {
+        val layout = editText.layout ?: return
+        val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
+        
+        val line = layout.getLineForOffset(cursorPos)
+        val lineTop = layout.getLineTop(line)
+        
+        // Absolute Y position of the cursor line inside the ScrollView's content
+        val cursorAbsoluteY = editText.top + lineTop
+        val visibleHeight = noteScroll.height
+        
+        // We want the cursor line to be positioned near the bottom of the visible area
+        // (slightly above the slot bar). 85% down the screen is the perfect spot.
+        val targetYOnScreen = (visibleHeight * 0.85).toInt()
+        
+        val targetScrollY = cursorAbsoluteY - targetYOnScreen
+        
+        noteScroll.smoothScrollTo(0, targetScrollY.coerceAtLeast(0))
     }
 
     /**
