@@ -750,4 +750,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    
+    private fun isKeyboardVisible(): Boolean = 
+        ViewCompat.getRootWindowInsets(rootLayout)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+
+    private fun showKeyboard() {
+        if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun hideKeyboard() {
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(editText.windowToken, 0)
+    }
 }
