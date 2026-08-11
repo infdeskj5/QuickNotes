@@ -329,8 +329,8 @@ class MainActivity : ComponentActivity() {
         dialog.window?.setGravity(Gravity.BOTTOM)
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
 
-        // Limit height to 65% of screen
-        val maxHeight = (resources.displayMetrics.heightPixels * 0.65).toInt()
+        // Limit height to 40% of screen
+        val maxHeight = (resources.displayMetrics.heightPixels * 0.40).toInt()
         scrollView.post {
             if (scrollView.height > maxHeight) {
                 scrollView.layoutParams = scrollView.layoutParams.apply { height = maxHeight }
