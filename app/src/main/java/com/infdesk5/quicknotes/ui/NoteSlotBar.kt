@@ -7,6 +7,7 @@ import android.os.Looper
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -40,15 +41,15 @@ class NoteSlotBar @JvmOverloads constructor(
     private var draggedView: TextView? = null
     private var draggedIndex = -1
     private var initialDragIndex = -1
-    private var startX = 0f
-    private var touchSlop = 0
+    private var startRawX = 0f
+    
     private val longPressHandler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
     init {
         addView(container, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
         isHorizontalScrollBarEnabled = false
-        touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     }
 
     fun setNotes(notes: List<Note>, slotCount: Int, appColor: Int, currentNoteId: String?) {
@@ -102,79 +103,6 @@ class NoteSlotBar @JvmOverloads constructor(
 
         textView.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36))
         textView.tag = index
-
-        textView.setOnTouchListener { v, event ->
-            val view = v as TextView
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    startX = event.rawX
-                    isDragging = false
-                    longPressRunnable = Runnable {
-                        isDragging = true
-                        draggedView = view
-                        draggedIndex = view.tag as Int
-                        initialDragIndex = draggedIndex
-                        view.elevation = 12f
-                        view.bringToFront()
-                        parent?.requestDisallowInterceptTouchEvent(true)
-                    }
-                    longPressHandler.postDelayed(longPressRunnable!!, ViewConfiguration.getLongPressTimeout().toLong())
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - startX
-                    if (!isDragging) {
-                        if (abs(dx) > touchSlop) {
-                            cancelPendingLongPress()
-                            parent?.requestDisallowInterceptTouchEvent(false)
-                            return@setOnTouchListener false
-                        }
-                    } else {
-                        view.translationX = dx
-                        val slotViews = getSlotViews()
-                        val draggedCenter = view.left + view.translationX + view.width / 2f
-                        
-                        for (i in slotViews.indices) {
-                            val other = slotViews[i]
-                            if (other == view) continue
-                            val otherCenter = other.left + other.translationX + other.width / 2f
-                            
-                            if (draggedIndex < i && draggedCenter > otherCenter) {
-                                shiftViews(draggedIndex, i)
-                                draggedIndex = i
-                                break
-                            } else if (draggedIndex > i && draggedCenter < otherCenter) {
-                                shiftViews(i, draggedIndex)
-                                draggedIndex = i
-                                break
-                            }
-                        }
-                        return@setOnTouchListener true
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    cancelPendingLongPress()
-                    if (isDragging) {
-                        isDragging = false
-                        view.elevation = 2f
-                        view.animate().translationX(0f).setDuration(150).withEndAction {
-                            for (child in getSlotViews()) child.translationX = 0f
-                            if (initialDragIndex != draggedIndex) {
-                                onSlotReorder?.invoke(initialDragIndex, draggedIndex)
-                            }
-                        }.start()
-                        true
-                    } else {
-                        view.performClick()
-                        true
-                    }
-                }
-                else -> false
-            }
-        }
-
-        textView.setOnClickListener { if (!isDragging) onSlotClick?.invoke(note) }
         return textView
     }
 
@@ -193,8 +121,8 @@ class NoteSlotBar @JvmOverloads constructor(
         longPressRunnable = null
     }
 
-    private fun getSlotViews(): List<View> {
-        val views = mutableListOf<View>()
+    private fun getSlotViews(): List<TextView> {
+        val views = mutableListOf<TextView>()
         for (i in 0 until container.childCount) {
             val child = container.getChildAt(i)
             if (child is TextView) views.add(child)
@@ -202,23 +130,178 @@ class NoteSlotBar @JvmOverloads constructor(
         return views
     }
 
-    private fun shiftViews(from: Int, to: Int) {
+    private fun findSlotViewAt(localX: Float, localY: Float): TextView? {
+        val touchX = localX + scrollX - container.paddingLeft
+        val touchY = localY - container.paddingTop
+        
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i)
+            if (child is TextView) {
+                if (touchX >= child.left && touchX <= child.right &&
+                    touchY >= child.top && touchY <= child.bottom) {
+                    return child
+                }
+            }
+        }
+        return null
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                startRawX = ev.rawX
+                val slotView = findSlotViewAt(ev.x, ev.y)
+                if (slotView != null) {
+                    draggedView = slotView
+                    draggedIndex = slotView.tag as Int
+                    initialDragIndex = draggedIndex
+                    
+                    longPressRunnable = Runnable {
+                        isDragging = true
+                        draggedView?.elevation = 12f
+                        draggedView?.bringToFront()
+                        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    }
+                    longPressHandler.postDelayed(longPressRunnable!!, ViewConfiguration.getLongPressTimeout().toLong())
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = abs(ev.rawX - startRawX)
+                if (dx > touchSlop) {
+                    cancelPendingLongPress()
+                    isDragging = false
+                    draggedView = null
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                cancelPendingLongPress()
+                if (!isDragging) {
+                    draggedView = null
+                }
+            }
+        }
+        
+        if (isDragging) return true
+        return super.onInterceptTouchEvent(ev)
+    }
+
+    override fun onTouchEvent(ev: MotionEvent): Boolean {
+        if (isDragging) {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = ev.rawX - startRawX
+                    draggedView?.translationX = dx
+                    
+                    autoScrollIfNeeded(ev.rawX)
+                    checkAndShiftViews()
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    endDrag()
+                    return true
+                }
+            }
+            return true
+        }
+        
+        if (ev.actionMasked == MotionEvent.ACTION_UP) {
+            val slotView = findSlotViewAt(ev.x, ev.y)
+            if (slotView != null) {
+                val noteIndex = slotView.tag as Int
+                if (noteIndex < notes.size) {
+                    onSlotClick?.invoke(notes[noteIndex])
+                }
+            }
+        }
+        
+        return super.onTouchEvent(ev)
+    }
+
+    private fun autoScrollIfNeeded(rawX: Float) {
+        val scrollEdgeThreshold = dp(40)
+        val screenLocation = IntArray(2)
+        this.getLocationOnScreen(screenLocation)
+        val viewLeft = screenLocation[0]
+        val viewRight = viewLeft + this.width
+        
+        if (rawX < viewLeft + scrollEdgeThreshold) {
+            this.smoothScrollBy(-dp(15), 0)
+        } else if (rawX > viewRight - scrollEdgeThreshold) {
+            this.smoothScrollBy(dp(15), 0)
+        }
+    }
+
+    private fun checkAndShiftViews() {
+        val dv = draggedView ?: return
+        val slotViews = getSlotViews()
+        val draggedCenter = dv.left + dv.translationX + dv.width / 2f
+        
+        var newIndex = 0
+        for (i in slotViews.indices) {
+            val other = slotViews[i]
+            val restingCenter = other.left + other.width / 2f
+            if (draggedCenter > restingCenter) {
+                newIndex = i
+            } else {
+                break
+            }
+        }
+        
+        if (newIndex != draggedIndex) {
+            draggedIndex = newIndex
+            updateShifts()
+        }
+    }
+
+    private fun updateShifts() {
         val slotViews = getSlotViews()
         val slotWidth = draggedView?.width ?: 0
         val spacerWidth = dp(6)
         val shiftAmount = slotWidth + spacerWidth
 
-        if (from < to) {
-            for (i in from + 1..to) {
-                val view = slotViews[i]
-                if (view != draggedView) view.animate().translationX(view.translationX - shiftAmount).setDuration(150).start()
+        for (i in slotViews.indices) {
+            val view = slotViews[i]
+            if (view == draggedView) continue
+            
+            val origIdx = view.tag as Int
+            var targetTranslation = 0f
+            
+            if (initialDragIndex < draggedIndex) {
+                if (origIdx in (initialDragIndex + 1)..draggedIndex) {
+                    targetTranslation = -shiftAmount.toFloat()
+                }
+            } else if (initialDragIndex > draggedIndex) {
+                if (origIdx in draggedIndex until initialDragIndex) {
+                    targetTranslation = shiftAmount.toFloat()
+                }
             }
-        } else if (from > to) {
-            for (i in to until from) {
-                val view = slotViews[i]
-                if (view != draggedView) view.animate().translationX(view.translationX + shiftAmount).setDuration(150).start()
+            
+            if (view.translationX != targetTranslation) {
+                view.animate().translationX(targetTranslation).setDuration(150).start()
             }
         }
+    }
+
+    private fun endDrag() {
+        val dv = draggedView ?: return
+        isDragging = false
+        dv.elevation = 2f
+        
+        dv.animate()
+            .translationX(0f)
+            .setDuration(150)
+            .withEndAction {
+                for (child in getSlotViews()) {
+                    child.translationX = 0f
+                }
+                if (initialDragIndex != draggedIndex) {
+                    onSlotReorder?.invoke(initialDragIndex, draggedIndex)
+                }
+                draggedView = null
+            }
+            .start()
+            
+        parent?.requestDisallowInterceptTouchEvent(false)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
