@@ -1069,6 +1069,7 @@ class MainActivity : ComponentActivity() {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
+                editText.post { showKeyboard() }
             }
         }
         editText.setOnClickListener {
@@ -1076,6 +1077,7 @@ class MainActivity : ComponentActivity() {
                 if (!editText.hasFocus()) {
                     editText.requestFocus()
                 }
+                editText.post { showKeyboard() }
             }
         }
     }
