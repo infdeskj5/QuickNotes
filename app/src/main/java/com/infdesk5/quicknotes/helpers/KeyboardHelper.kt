@@ -1,5 +1,6 @@
 package com.infdesk5.quicknotes.helpers
 
+import android.content.Context
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -10,7 +11,7 @@ import androidx.core.view.WindowInsetsCompat
 class KeyboardHelper(private val activity: ComponentActivity) {
 
     private val imm: InputMethodManager
-        get() = activity.getSystemService(ComponentActivity.INPUT_METHOD_SERVICE) as InputMethodManager
+        get() = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
 
     fun showKeyboard(view: EditText) {
         imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
