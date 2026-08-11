@@ -209,8 +209,6 @@ class MainActivity : ComponentActivity() {
         noteScroll.setSmoothScrollingEnabled(false)
 
         // CRITICAL: Prevent keyboard from auto-showing on focus.
-        // This allows text selection without keyboard interference.
-        // Keyboard is shown explicitly via click handlers and openNote().
         editText.setShowSoftInputOnFocus(false)
 
         applyTopInset()
@@ -221,7 +219,7 @@ class MainActivity : ComponentActivity() {
         noteScroll.onScrollChangedListener = { _, _ -> updateFastScroller() }
         rootLayout.viewTreeObserver.addOnGlobalLayoutListener(globalLayoutListener)
 
-        // Keyboard insets listener: scroll to cursor when keyboard appears
+        // Keyboard insets listener: verify cursor visibility when keyboard appears
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
             val isImeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
             
@@ -230,10 +228,9 @@ class MainActivity : ComponentActivity() {
                     noteScroll.post { scrollToEnd() }
                     scrollToEndWhenKeyboardVisible = false
                 } else if (editText.hasFocus() && !isTextSelectionActionMode) {
-                    // User clicked somewhere and keyboard appeared, scroll to cursor
-                    noteScroll.post { scrollToCursorAboveSlotBar() }
+                    // Keyboard slid up, ensure it didn't cover the cursor
+                    noteScroll.postDelayed({ ensureCursorIsVisible() }, 100)
                 } else if (isTextSelectionActionMode) {
-                    // Keyboard appeared during selection, force menu to redraw on new layout
                     editText.postDelayed({ currentActionMode?.invalidate() }, 100)
                 }
             }
@@ -321,11 +318,8 @@ class MainActivity : ComponentActivity() {
         if (noteManager.keyboardOnSelect) {
             val selStart = editText.selectionStart
             val selEnd = editText.selectionEnd
-            
-            // Show keyboard immediately to start the layout resize
             showKeyboard()
             
-            // Restore selection and redraw menu after layout settles
             editText.postDelayed({
                 if (editText.selectionStart == editText.selectionEnd || editText.selectionStart == -1) {
                     try {
@@ -507,27 +501,23 @@ class MainActivity : ComponentActivity() {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                showKeyboard() // Ensure keyboard opens immediately
+                showKeyboard()
             }
         }
-        editText.setOnClickListener {
-            if (!isTextSelectionActionMode) {
-                if (!editText.hasFocus()) {
-                    editText.requestFocus()
-                }
-                
-                if (isKeyboardVisible()) {
-                    editText.postDelayed({ scrollToCursorAboveSlotBar() }, 100)
-                } else {
-                    // Delay showing the keyboard slightly to prevent flashing
-                    // in case this is the first tap of a double-tap word selection.
-                    editText.postDelayed({
-                        if (!isTextSelectionActionMode) {
-                            showKeyboard()
-                        }
-                    }, 200)
-                }
+        
+        // Use OnTouchListener to bypass Android consuming the first tap for "focus"
+        editText.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_UP) {
+                // Post slight delay so EditText handles cursor placement first
+                editText.postDelayed({
+                    // Only show keyboard if we are not actively highlighting a word
+                    if (!isTextSelectionActionMode && editText.selectionStart == editText.selectionEnd) {
+                        showKeyboard()
+                        ensureCursorIsVisible()
+                    }
+                }, 50)
             }
+            false // Must return false so standard text selection and scrolling still work
         }
     }
 
@@ -667,42 +657,44 @@ class MainActivity : ComponentActivity() {
         val maxScroll = noteScroll.getMaxScroll()
         if (maxScroll > 0) noteScroll.scrollTo(0, maxScroll)
     }
-    
-    private fun scrollToCursorAboveSlotBar() {
-        val layout = editText.layout ?: return
-        val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
-        
-        val line = layout.getLineForOffset(cursorPos)
-        val lineTop = layout.getLineTop(line)
-        
-        // Absolute Y position of the cursor line inside the ScrollView's content
-        val cursorAbsoluteY = editText.top + lineTop
-        val visibleHeight = noteScroll.height
-        
-        // We want the cursor line to be positioned near the bottom of the visible area
-        // (slightly above the slot bar). 85% down the screen is the perfect spot.
-        val targetYOnScreen = (visibleHeight * 0.85).toInt()
-        
-        val targetScrollY = cursorAbsoluteY - targetYOnScreen
-        
-        // Using undo/redo bounds logic to perfectly lock the scroll, 
-        // preventing the text from moving over the toolbar or below the slot bar.
-        noteScroll.smoothScrollTo(0, targetScrollY.coerceAtLeast(0).coerceAtMost(noteScroll.getMaxScroll()))
-    }
 
     /**
-     * Scrolls so the cursor line is visible slightly above the slot bar.
-     * Positions the cursor at ~70% from the top of the visible scroll area.
+     * Intelligently keeps the cursor visible. 
+     * If the cursor is already in the middle 80% of the screen, it does NOT scroll.
+     * It only scrolls if the cursor is dangerously close to the keyboard or top edge.
      */
-    private fun scrollToCursorLine() {
+    private fun ensureCursorIsVisible() {
         val layout = editText.layout ?: return
         val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
         val line = layout.getLineForOffset(cursorPos)
+        
         val lineTop = layout.getLineTop(line)
-        val editTextTop = editText.top
-        // Place cursor line at 70% from top → slightly above the slot bar
-        val targetY = editTextTop + lineTop - (noteScroll.height * 0.7).toInt()
-        noteScroll.scrollTo(0, targetY.coerceAtLeast(0).coerceAtMost(noteScroll.getMaxScroll()))
+        val lineBottom = layout.getLineBottom(line)
+        
+        val cursorAbsoluteTop = editText.top + lineTop
+        val cursorAbsoluteBottom = editText.top + lineBottom
+        
+        val currentScrollY = noteScroll.scrollY
+        val visibleHeight = noteScroll.height
+        val currentScrollBottom = currentScrollY + visibleHeight
+        
+        // Create a 10% safe zone padding to keep text from touching physical screen edges
+        val padding = (visibleHeight * 0.1).toInt() 
+        
+        var targetScrollY = currentScrollY
+        
+        if (cursorAbsoluteBottom > currentScrollBottom - padding) {
+            // Cursor is too low, nudge screen down
+            targetScrollY = cursorAbsoluteBottom - visibleHeight + padding
+        } else if (cursorAbsoluteTop < currentScrollY + padding) {
+            // Cursor is too high, nudge screen up
+            targetScrollY = cursorAbsoluteTop - padding
+        }
+        
+        // Only scroll if actually necessary
+        if (targetScrollY != currentScrollY) {
+            noteScroll.smoothScrollTo(0, targetScrollY.coerceAtLeast(0).coerceAtMost(noteScroll.getMaxScroll()))
+        }
     }
 
     private fun setCursorEndAndShowKeyboard() {
@@ -767,9 +759,6 @@ class MainActivity : ComponentActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     
-    private fun isKeyboardVisible(): Boolean = 
-        ViewCompat.getRootWindowInsets(rootLayout)?.isVisible(WindowInsetsCompat.Type.ime()) == true
-
     private fun showKeyboard() {
         if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
         val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
