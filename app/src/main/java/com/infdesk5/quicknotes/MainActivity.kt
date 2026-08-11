@@ -756,12 +756,17 @@ class MainActivity : ComponentActivity() {
 
     private fun showKeyboard() {
         if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
-        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-            .showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
+        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun showKeyboardFor(view: EditText) {
+        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
     }
 
     private fun hideKeyboard() {
-        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-            .hideSoftInputFromWindow(editText.windowToken, 0)
+        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.hideSoftInputFromWindow(editText.windowToken, 0)
     }
 }
