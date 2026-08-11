@@ -1061,13 +1061,13 @@ class MainActivity : ComponentActivity() {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                editText.postDelayed({ showKeyboardForced() }, 100)
+                editText.postDelayed({ showKeyboardForced() }, 150)
             }
         }
         editText.setOnClickListener {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
-                editText.postDelayed({ showKeyboardForced() }, 100)
+                editText.postDelayed({ showKeyboardForced() }, 150)
             }
         }
     }
