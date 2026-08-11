@@ -69,7 +69,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var searchBar: LinearLayout
     private lateinit var searchInput: EditText
     private lateinit var fastScroller: View
-
+    
+    private var lastKnownWindowHeight = 0
     private var currentNote: Note? = null
     private var allNotes: List<Note> = emptyList()
     private var saveJob: Job? = null
@@ -90,6 +91,14 @@ class MainActivity : ComponentActivity() {
     private val globalLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
         scrollToEndIfRequested()
         updateFastScroller()
+
+        // Detect window resize (multi-window, Taskbar, split screen)
+        val currentHeight = rootLayout.height
+        if (currentHeight > 0 && currentHeight != lastKnownWindowHeight) {
+            lastKnownWindowHeight = currentHeight
+            applyTopInset()
+            applyScrollerSize()
+        }
     }
 
     private val textWatcher = object : TextWatcher {
@@ -920,7 +929,13 @@ class MainActivity : ComponentActivity() {
     private fun applyTopInset() {
         val basePadding = dp(16)
         val percent = noteManager.topInsetPercent.coerceIn(0, MAX_TOP_INSET_PERCENT)
-        val topInset = (resources.displayMetrics.heightPixels * percent / 100f).toInt()
+        // Use actual window height instead of full screen height
+        val availableHeight = if (lastKnownWindowHeight > 0) {
+            lastKnownWindowHeight
+        } else {
+            resources.displayMetrics.heightPixels
+        }
+        val topInset = (availableHeight * percent / 100f).toInt()
         editText.setPadding(basePadding, topInset, basePadding, basePadding)
     }
 
@@ -1035,7 +1050,12 @@ class MainActivity : ComponentActivity() {
         val scrollThumb = findViewById<View>(R.id.scroll_thumb)
         val controller = FastScrollController(noteScroll, fastScroller, scrollThumb)
         controller.setup()
-        controller.setTopMargin((resources.displayMetrics.heightPixels * 45 / 100f).toInt())
+        val availableHeight = if (lastKnownWindowHeight > 0) {
+            lastKnownWindowHeight
+        } else {
+            resources.displayMetrics.heightPixels
+        }
+        controller.setTopMargin((availableHeight * 45 / 100f).toInt())
     }
 
     private fun updateFastScroller() {
