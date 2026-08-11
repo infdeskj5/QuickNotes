@@ -1058,9 +1058,17 @@ class MainActivity : ComponentActivity() {
 
     private fun setupClickToFocus() {
         findViewById<View>(R.id.note_content).setOnClickListener {
-            if (!isTextSelectionActionMode) { editText.requestFocus(); editText.setSelection(editText.text.length); showKeyboard() }
+            if (!isTextSelectionActionMode) {
+                editText.requestFocus()
+                editText.setSelection(editText.text.length)
+                editText.post { showKeyboard() }
+            }
         }
-        editText.setOnClickListener { if (!isTextSelectionActionMode) showKeyboard() }
+        editText.setOnClickListener {
+            if (!isTextSelectionActionMode) {
+                editText.post { showKeyboard() }
+            }
+        }
     }
 
     private fun setTextWithoutWatcher(text: String) {
