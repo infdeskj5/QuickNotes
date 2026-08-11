@@ -8,7 +8,7 @@ object NoteUtils {
 
     fun newNoteName(): String {
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        return "note-$stamp.txt"
+        return "Note-$stamp.txt"
     }
 
     fun buildNewName(raw: String, originalName: String): String {

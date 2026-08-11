@@ -1,51 +1,70 @@
 <resources>
     <string name="app_name">QuickNotes</string>
-
-    <string name="new_note">New</string>
+    <string name="new_note">+</string>
     <string name="notes">Notes</string>
     <string name="save">Save</string>
+    <string name="settings">Settings</string>
     <string name="choose_folder">Choose folder</string>
+    <string name="search_in_note">Search</string>
+    <string name="search_hint">Search…</string>
+    <string name="search_all_notes">Search all notes</string>
+    <string name="previous">Previous</string>
+    <string name="next">Next</string>
+    <string name="close">Close</string>
+    <string name="create">Create</string>
 
     <string name="hint_write">Write quickly…</string>
-
-    <string name="folder_needed">
-        QuickNotes needs access to a folder to save notes.
-    </string>
-
+    <string name="folder_needed">QuickNotes needs access to a folder to save notes.</string>
     <string name="saved">Saved</string>
-
-    <string name="save_failed_choose_folder">
-        Save failed. Choose the notes folder again.
-    </string>
-
-    <string name="could_not_create_note">
-        Could not create a note in the selected folder.
-    </string>
-
-    <string name="could_not_open_note">
-        Could not open note.
-    </string>
-
-    <string name="no_notes_found">
-        No notes found in this folder.
-    </string>
-
+    <string name="save_failed_choose_folder">Save failed. Choose the notes folder again.</string>
+    <string name="could_not_create_note">Could not create a note.</string>
+    <string name="could_not_open_note">Could not open note.</string>
+    <string name="no_notes_found">No notes found.</string>
     <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+    <string name="delete">Delete</string>
+    <string name="delete_note_confirm">Delete this note?</string>
+    <string name="note_deleted">Note deleted</string>
+    <string name="create_shortcut">Create shortcut</string>
+    <string name="shortcut_created">Shortcut created</string>
 
     <string name="rename">Rename</string>
     <string name="rename_note">Rename note</string>
     <string name="name_cannot_be_empty">Name cannot be empty.</string>
     <string name="renamed">Renamed.</string>
-
-    <string name="rename_failed">
-        Rename failed. This folder provider may not allow renaming.
-    </string>
-
+    <string name="rename_failed">Rename failed.</string>
     <string name="note">Note</string>
+    <string name="show_keyboard_on_open">Keyboard when opening note</string>
 
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
 
     <string name="top_height">Top height</string>
     <string name="top_height_value">%1$d%%</string>
+    <string name="scroller_size">Scroller size</string>
+    <string name="scroller_size_value">%1$d%%</string>
+    <string name="show_scroller">Show right scroller</string>
+    <string name="max_slots">Max slots</string>
+
+    <string name="storage_mode">Storage: %1$s</string>
+    <string name="storage_local">Local</string>
+    <string name="storage_external">External</string>
+    <string name="sync_notes">Sync notes</string>
+    <string name="sync_complete">Sync complete: %1$d copied, %2$d updated</string>
+    <string name="import_backup">Import backup</string>
+    <string name="export_backup">Export backup</string>
+    <string name="backup_exported">Backup exported to %1$s</string>
+    <string name="backup_imported">Backup imported</string>
+    <string name="backup_failed">Backup operation failed</string>
+
+    <string name="app_color">App color (Hex)</string>
+    <string name="keyboard_on_select">Keyboard on text select</string>
+    <string name="search_highlight_color">Search highlight color</string>
+    <string name="current_search_color">Current search color</string>
+
+    <string name="assign_to_slot">Assign to slot</string>
+    <string name="slot_color">Slot color</string>
+
+    <string name="no_search_results">No results found</string>
+    <string name="search_results">%1$d results in %2$d notes</string>
 </resources>

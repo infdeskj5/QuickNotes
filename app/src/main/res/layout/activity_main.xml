@@ -43,6 +43,65 @@
 
         </com.infdesk5.quicknotes.ObservableScrollView>
 
+        <!-- In-note search bar (hidden by default) -->
+        <LinearLayout
+            android:id="@+id/search_bar"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:orientation="horizontal"
+            android:background="@color/surface"
+            android:padding="4dp"
+            android:visibility="gone"
+            android:gravity="center_vertical">
+
+            <EditText
+                android:id="@+id/search_input"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="@string/search_hint"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_hint"
+                android:textSize="14sp"
+                android:background="@null"
+                android:padding="8dp"
+                android:singleLine="true"
+                android:imeOptions="actionSearch" />
+
+            <ImageButton
+                android:id="@+id/search_prev"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:src="@android:drawable/arrow_up_float"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/previous" />
+
+            <ImageButton
+                android:id="@+id/search_next"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:src="@android:drawable/arrow_down_float"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/next" />
+
+            <ImageButton
+                android:id="@+id/search_close"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/close" />
+
+        </LinearLayout>
+
+        <!-- Note Slot Bar -->
+        <com.infdesk5.quicknotes.ui.NoteSlotBar
+            android:id="@+id/note_slot_bar"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@color/surface" />
+
+        <!-- Bottom Toolbar -->
         <Toolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
@@ -54,13 +113,14 @@
 
     </LinearLayout>
 
+    <!-- Fast Scroller (Lifted to avoid overlapping the 48dp slot bar + 56dp toolbar) -->
     <FrameLayout
         android:id="@+id/fast_scroller"
         android:layout_width="24dp"
         android:layout_height="match_parent"
         android:layout_gravity="end|top"
         android:layout_marginEnd="2dp"
-        android:layout_marginBottom="?android:attr/actionBarSize"
+        android:layout_marginBottom="108dp"
         android:visibility="invisible">
 
         <View
