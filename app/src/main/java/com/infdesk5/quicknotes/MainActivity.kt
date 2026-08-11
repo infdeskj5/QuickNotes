@@ -946,38 +946,48 @@ class MainActivity : ComponentActivity() {
 
     private fun undo() {
         val scrollY = noteScroll.scrollY
+        val selectionStart = editText.selectionStart
+        val selectionEnd = editText.selectionEnd
+        
         val previous = undoRedo.undo(editText.text.toString()) ?: return
-
+    
         setTextWithoutWatcher(previous)
-
-        // Restore scroll position using OnPreDrawListener to ensure it runs
-        // AFTER the EditText's internal scroll-to-cursor behavior
-        noteScroll.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
-            override fun onPreDraw(): Boolean {
-                noteScroll.viewTreeObserver.removeOnPreDrawListener(this)
-                noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
-                return true
-            }
-        })
-
+    
+        // Restore cursor selection to prevent EditText from requesting a scroll to the top
+        try {
+            val newLen = editText.text.length
+            editText.setSelection(selectionStart.coerceAtMost(newLen), selectionEnd.coerceAtMost(newLen))
+        } catch (_: Exception) {}
+    
+        // Use post() to ensure the scroll happens AFTER the layout and internal EditText scroll adjustments
+        noteScroll.post {
+            noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
+        }
+    
         scheduleSave()
         invalidateOptionsMenu()
     }
-
+    
     private fun redo() {
         val scrollY = noteScroll.scrollY
+        val selectionStart = editText.selectionStart
+        val selectionEnd = editText.selectionEnd
+        
         val next = undoRedo.redo(editText.text.toString()) ?: return
-
+    
         setTextWithoutWatcher(next)
-
-        noteScroll.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
-            override fun onPreDraw(): Boolean {
-                noteScroll.viewTreeObserver.removeOnPreDrawListener(this)
-                noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
-                return true
-            }
-        })
-
+    
+        // Restore cursor selection to prevent EditText from requesting a scroll to the top
+        try {
+            val newLen = editText.text.length
+            editText.setSelection(selectionStart.coerceAtMost(newLen), selectionEnd.coerceAtMost(newLen))
+        } catch (_: Exception) {}
+    
+        // Use post() to ensure the scroll happens AFTER the layout and internal EditText scroll adjustments
+        noteScroll.post {
+            noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
+        }
+    
         scheduleSave()
         invalidateOptionsMenu()
     }
