@@ -34,6 +34,7 @@
     <string name="renamed">Renamed.</string>
     <string name="rename_failed">Rename failed.</string>
     <string name="note">Note</string>
+    <string name="show_keyboard_on_open">Keyboard when opening note</string>
 
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
