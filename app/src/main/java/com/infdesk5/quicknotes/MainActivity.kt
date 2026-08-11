@@ -945,17 +945,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun undo() {
+        val scrollY = noteScroll.scrollY
         val previous = undoRedo.undo(editText.text.toString()) ?: return
         setTextWithoutWatcher(previous)
-        editText.setSelection(editText.selectionStart.coerceIn(0, previous.length))
+        
+        noteScroll.post {
+            noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
+        }
+        
         scheduleSave()
         invalidateOptionsMenu()
     }
 
     private fun redo() {
+        val scrollY = noteScroll.scrollY
         val next = undoRedo.redo(editText.text.toString()) ?: return
         setTextWithoutWatcher(next)
-        editText.setSelection(editText.selectionStart.coerceIn(0, next.length))
+        
+        noteScroll.post {
+            noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
+        }
+        
         scheduleSave()
         invalidateOptionsMenu()
     }
