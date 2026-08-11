@@ -1061,12 +1061,12 @@ class MainActivity : ComponentActivity() {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                editText.post { showKeyboard() }
+                editText.post { showKeyboardForced() }
             }
         }
         editText.setOnClickListener {
             if (!isTextSelectionActionMode) {
-                editText.post { showKeyboard() }
+                editText.post { showKeyboardForced() }
             }
         }
     }
@@ -1097,6 +1097,12 @@ class MainActivity : ComponentActivity() {
     private fun showKeyboard() {
         if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
+    }
+    
+    private fun showKeyboardForced() {
+        if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(editText, InputMethodManager.SHOW_FORCED)
     }
 
     private fun showKeyboardFor(view: EditText) {
