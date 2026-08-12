@@ -946,15 +946,40 @@ class MainActivity : ComponentActivity() {
     private fun setupClickToFocus() {
         findViewById<View>(R.id.note_content).setOnClickListener {
             if (!isTextSelectionActionMode) {
+                val wasKeyboardVisible = isKeyboardVisible()
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                showKeyboard()
+                keyboardHelper.showKeyboard(editText)
+                if (wasKeyboardVisible) {
+                    editText.postDelayed({
+                        if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
+                    }, 50)
+                }
             }
         }
-        editText.setOnClickListener {
-            if (!isTextSelectionActionMode) {
-                showKeyboard()
+    
+        editText.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_UP) {
+                // postDelayed (not post) so onActionModeStarted has time to set
+                // isTextSelectionActionMode = true before we decide whether to
+                // show the keyboard. Without the delay, the flag is still false
+                // and the keyboard appears even when the option is disabled.
+                editText.postDelayed({
+                    val isSelecting = isTextSelectionActionMode ||
+                            editText.selectionStart != editText.selectionEnd
+                    if (!isSelecting) {
+                        val wasKeyboardVisible = isKeyboardVisible()
+                        if (!editText.hasFocus()) editText.requestFocus()
+                        keyboardHelper.showKeyboard(editText)
+                        if (wasKeyboardVisible) {
+                            editText.postDelayed({
+                                if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
+                            }, 50)
+                        }
+                    }
+                }, 100)
             }
+            false
         }
     }
 
