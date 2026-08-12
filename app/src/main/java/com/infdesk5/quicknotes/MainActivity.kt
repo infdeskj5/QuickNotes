@@ -35,6 +35,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import android.graphics.Rect
 
 class MainActivity : ComponentActivity() {
 
@@ -317,27 +318,29 @@ class MainActivity : ComponentActivity() {
         isTextSelectionActionMode = true
     
         if (noteManager.keyboardOnSelect) {
-            if (isKeyboardVisible()) return
-            val selStart = editText.selectionStart
-            val selEnd = editText.selectionEnd
+            if (!isKeyboardVisible()) {
+                val selStart = editText.selectionStart
+                val selEnd = editText.selectionEnd
     
-            showKeyboard()
+                showKeyboard()
     
-            // Showing the keyboard restarts the input connection, which can collapse
-            // the selection as a side effect. Restore it first, then let the floating
-            // toolbar recompute its position now that both the window and the
-            // selection have settled.
-            rootLayout.postDelayed({
-                if (editText.selectionStart == editText.selectionEnd) {
-                    try {
-                        editText.setSelection(
-                            selStart.coerceIn(0, editText.text.length),
-                            selEnd.coerceIn(0, editText.text.length)
-                        )
-                    } catch (_: Exception) {}
-                }
+                rootLayout.postDelayed({
+                    if (editText.selectionStart == editText.selectionEnd) {
+                        try {
+                            editText.setSelection(
+                                selStart.coerceIn(0, editText.text.length),
+                                selEnd.coerceIn(0, editText.text.length)
+                            )
+                        } catch (_: Exception) {}
+                    }
+                    mode?.invalidateContentRect()
+                }, 300)
+            } else {
+                // Keyboard was already visible — Android may still have restarted the
+                // ActionMode (new `mode` instance) due to the resize. Always tell it
+                // to reposition, without re-showing the keyboard or touching selection.
                 mode?.invalidateContentRect()
-            }, 300)
+            }
         } else {
             hideKeyboard()
         }
@@ -692,23 +695,38 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun scrollToCursorAboveSlotBar() {
-        val visibleHeight = noteScroll.height
-        if (visibleHeight <= 0) return
-    
         setCursorScrollSpacer(true)
     
-        noteScroll.post {
-            val layout = editText.layout ?: return@post
+        fun cursorTargetScrollY(): Int? {
+            val visibleHeight = noteScroll.height
+            if (visibleHeight <= 0) return null
+            val layout = editText.layout ?: return null
             val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
             val line = layout.getLineForOffset(cursorPos)
-            // Layout coordinates start below the EditText's own top padding
-            // (your "Top height" setting) — that offset was missing before.
-            val lineBottom = editText.top + editText.totalPaddingTop + layout.getLineBottom(line)
     
+            // Ask Android for the line's real on-screen bounds instead of
+            // reconstructing them from padding math — this already accounts for
+            // every padding/inset EditText applies internally.
+            val lineBounds = Rect()
+            editText.getLineBounds(line, lineBounds)
+    
+            val editTextLoc = IntArray(2)
+            editText.getLocationOnScreen(editTextLoc)
+            val scrollLoc = IntArray(2)
+            noteScroll.getLocationOnScreen(scrollLoc)
+    
+            val lineBottomInContent = noteScroll.scrollY + (editTextLoc[1] - scrollLoc[1]) + lineBounds.bottom
             val margin = dp(CURSOR_BOTTOM_MARGIN_DP)
-            val targetScrollY = lineBottom + margin - visibleHeight
+            val targetScrollY = lineBottomInContent + margin - visibleHeight
+            return targetScrollY.coerceIn(0, noteScroll.getMaxScroll().coerceAtLeast(0))
+        }
     
-            noteScroll.smoothScrollTo(0, targetScrollY.coerceIn(0, noteScroll.getMaxScroll().coerceAtLeast(0)))
+        noteScroll.post {
+            cursorTargetScrollY()?.let { noteScroll.smoothScrollTo(0, it) }
+            // Silent correction once the keyboard resize has fully settled.
+            noteScroll.postDelayed({
+                cursorTargetScrollY()?.let { noteScroll.scrollTo(0, it) }
+            }, 150)
         }
     }
 
