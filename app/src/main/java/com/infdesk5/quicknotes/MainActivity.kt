@@ -768,4 +768,15 @@ class MainActivity : ComponentActivity() {
             noteScroll.smoothScrollTo(0, targetScrollY.coerceIn(0, noteScroll.getMaxScroll()))
         }
     }
+    
+    private fun showKeyboard() {
+        if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
+        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun hideKeyboard() {
+        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.hideSoftInputFromWindow(editText.windowToken, 0)
+    }
 }
