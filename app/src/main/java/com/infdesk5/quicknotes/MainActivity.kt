@@ -489,25 +489,44 @@ class MainActivity : ComponentActivity() {
     private fun setupClickToFocus() {
         findViewById<View>(R.id.note_content).setOnClickListener {
             if (!isTextSelectionActionMode) {
+                val wasKeyboardVisible = isKeyboardVisible()
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
                 keyboardHelper.showKeyboard(editText)
-                editText.postDelayed({
-                    if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
-                }, 100)
+                if (wasKeyboardVisible) {
+                    // Keyboard visibility isn't changing, so the insets listener won't
+                    // fire for us — reposition manually. If it's newly appearing,
+                    // let the insets listener do it once, using the final screen height.
+                    editText.postDelayed({
+                        if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
+                    }, 50)
+                }
             }
         }
     
-        // Intentionally NOT an OnClickListener: that was breaking double-tap word
-        // selection. OnTouchListener returning false never consumes the event, so
-        // EditText's native tap/double-tap/long-press/drag handling runs untouched.
+        // Intentionally NOT an OnClickListener: that broke double-tap word selection.
+        // OnTouchListener returning false never consumes the event, so EditText's
+        // native tap/double-tap/long-press/drag handling runs untouched.
         editText.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_UP && !isTextSelectionActionMode) {
-                if (!editText.hasFocus()) editText.requestFocus()
-                keyboardHelper.showKeyboard(editText)
-                editText.postDelayed({
-                    if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
-                }, 100)
+            if (event.action == MotionEvent.ACTION_UP) {
+                // Defer one frame so a selection gesture (whose ActionMode starts
+                // asynchronously) has a chance to register first. The selection
+                // check is a second guard for the same race. Either way, if the
+                // user is selecting text, onActionModeStarted() owns the keyboard
+                // decision — not this listener.
+                editText.post {
+                    val isSelecting = isTextSelectionActionMode || editText.selectionStart != editText.selectionEnd
+                    if (!isSelecting) {
+                        val wasKeyboardVisible = isKeyboardVisible()
+                        if (!editText.hasFocus()) editText.requestFocus()
+                        keyboardHelper.showKeyboard(editText)
+                        if (wasKeyboardVisible) {
+                            editText.postDelayed({
+                                if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
+                            }, 50)
+                        }
+                    }
+                }
             }
             false
         }
