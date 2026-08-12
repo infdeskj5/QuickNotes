@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
         private const val AUTOSAVE_DELAY_MS = 700L
         private const val MAX_TOP_INSET_PERCENT = 90
         private const val EXTRA_NOTE_ID = "extra_note_id"
+        private const val CURSOR_BOTTOM_MARGIN_DP = 24
     }
 
     // === Views ===
@@ -69,6 +70,7 @@ class MainActivity : ComponentActivity() {
     // === Keyboard & Selection State ===
     private var isTextSelectionActionMode = false
     private var scrollToEndWhenKeyboardVisible = false
+    private var cursorScrollSpacer = 0   // extra bottom room so any line can reach the target spot
 
     // === Helpers ===
     private lateinit var keyboardHelper: KeyboardHelper
@@ -223,17 +225,18 @@ class MainActivity : ComponentActivity() {
         // Keyboard insets listener: scroll to cursor when keyboard appears
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
             val isImeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
-            
+        
             if (isImeVisible) {
                 if (scrollToEndWhenKeyboardVisible) {
                     noteScroll.post { scrollToEnd() }
                     scrollToEndWhenKeyboardVisible = false
                 } else if (editText.hasFocus() && !isTextSelectionActionMode) {
-                    // User clicked somewhere and keyboard appeared, scroll to cursor
                     noteScroll.post { scrollToCursorAboveSlotBar() }
                 }
+            } else {
+                setCursorScrollSpacer(false)   // ← new line
             }
-            
+        
             ViewCompat.onApplyWindowInsets(view, insets)
         }
 
@@ -312,28 +315,15 @@ class MainActivity : ComponentActivity() {
     override fun onActionModeStarted(mode: ActionMode?) {
         super.onActionModeStarted(mode)
         isTextSelectionActionMode = true
-        
+    
         if (noteManager.keyboardOnSelect) {
             if (isKeyboardVisible()) return
-            val selStart = editText.selectionStart
-            val selEnd = editText.selectionEnd
-            
-            // Delay showing keyboard to let the ActionMode fully initialize
-            editText.postDelayed({
-                showKeyboard()
-                
-                // Restore selection if the system cleared it during the keyboard layout change
-                editText.postDelayed({
-                    if (editText.selectionStart == editText.selectionEnd || editText.selectionStart == -1) {
-                        try {
-                            editText.setSelection(
-                                selStart.coerceIn(0, editText.text.length),
-                                selEnd.coerceIn(0, editText.text.length)
-                            )
-                        } catch (_: Exception) {}
-                    }
-                }, 200)
-            }, 100)
+            showKeyboard()
+            // Keyboard appearing resizes the window, which can leave the floating
+            // copy/paste toolbar mispositioned or invisible. Ask it to recompute
+            // its own position — don't touch the selection, that was what was
+            // dismissing the toolbar.
+            rootLayout.postDelayed({ mode?.invalidateContentRect() }, 250)
         } else {
             hideKeyboard()
         }
@@ -570,7 +560,15 @@ class MainActivity : ComponentActivity() {
         val availableHeight = if (lastKnownWindowHeight > 0) lastKnownWindowHeight
         else resources.displayMetrics.heightPixels
         val topInset = (availableHeight * percent / 100f).toInt()
-        editText.setPadding(basePadding, topInset, basePadding, basePadding)
+        editText.setPadding(basePadding, topInset, basePadding, basePadding + cursorScrollSpacer)
+    }
+    
+    private fun setCursorScrollSpacer(active: Boolean) {
+        val target = if (active) noteScroll.height else 0
+        if (target != cursorScrollSpacer) {
+            cursorScrollSpacer = target
+            applyTopInset()
+        }
     }
 
     private fun applyScrollerSize() {
@@ -661,27 +659,24 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun scrollToCursorAboveSlotBar() {
-        val layout = editText.layout ?: return
-        val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
-        val line = layout.getLineForOffset(cursorPos)
-        val lineTop = editText.top + layout.getLineTop(line)
-        val lineBottom = editText.top + layout.getLineBottom(line)
-    
         val visibleHeight = noteScroll.height
         if (visibleHeight <= 0) return
     
-        val margin = dp(12)
-        val visibleTop = noteScroll.scrollY
-        val visibleBottom = visibleTop + visibleHeight
+        // Guarantee there's always enough scroll room, even on a short note or
+        // when the cursor is on the very first line.
+        setCursorScrollSpacer(true)
     
-        // Only move if the cursor line isn't already comfortably in view.
-        val targetScrollY = when {
-            lineBottom + margin > visibleBottom -> lineBottom + margin - visibleHeight
-            lineTop - margin < visibleTop -> lineTop - margin
-            else -> return // already visible, don't jump the view around
+        noteScroll.post {
+            val layout = editText.layout ?: return@post
+            val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
+            val line = layout.getLineForOffset(cursorPos)
+            val lineBottom = editText.top + layout.getLineBottom(line)
+    
+            val margin = dp(CURSOR_BOTTOM_MARGIN_DP)
+            val targetScrollY = lineBottom + margin - visibleHeight
+    
+            noteScroll.smoothScrollTo(0, targetScrollY.coerceIn(0, noteScroll.getMaxScroll().coerceAtLeast(0)))
         }
-    
-        noteScroll.smoothScrollTo(0, targetScrollY.coerceIn(0, noteScroll.getMaxScroll().coerceAtLeast(0)))
     }
 
     /**
