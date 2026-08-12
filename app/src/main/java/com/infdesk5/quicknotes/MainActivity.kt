@@ -147,6 +147,10 @@ class MainActivity : ComponentActivity() {
         searchInput = findViewById(R.id.search_input)
         fastScroller = findViewById(R.id.fast_scroller)
 
+        // STRIP ANDROID OF AUTOMATIC KEYBOARD CONTROL FOR THIS EDITTEXT
+        // This ensures the keyboard ONLY opens when our custom manual logic tells it to.
+        editText.showSoftInputOnFocus = false 
+
         noteManager = NoteManager(this, getPreferences(MODE_PRIVATE))
 
         setupFastScroller()
@@ -255,10 +259,10 @@ class MainActivity : ComponentActivity() {
         if (noteManager.keyboardOnSelect) {
             showKeyboard()
         } else {
+            // Because of 'showSoftInputOnFocus = false', Android isn't trying to 
+            // force it open anymore! We only need this line to dismiss it 
+            // gracefully if the user *already* had the keyboard open while typing.
             hideKeyboard()
-            // Forcefully hide again after a tiny delay to override Android's default 
-            // text selection keyboard popup behavior.
-            editText.postDelayed({ hideKeyboard() }, 100)
         }
     }
 
@@ -978,9 +982,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 showKeyboardRunnable = action
-                // Increase the delay slightly from 100 to 150. This gives the system just enough
-                // time to recognize the second tap of a "double-tap" and start text selection BEFORE
-                // it attempts to fire the keyboard. 
                 editText.postDelayed(action, 150)
             }
             false // Must return false so standard text selection and scrolling still work
