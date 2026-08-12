@@ -208,9 +208,6 @@ class MainActivity : ComponentActivity() {
         undoRedo.onAvailabilityChanged = { invalidateOptionsMenu() }
         noteScroll.setSmoothScrollingEnabled(false)
 
-        // CRITICAL: Prevent keyboard from auto-showing on focus.
-        editText.setShowSoftInputOnFocus(false)
-
         applyTopInset()
         applyAppColor()
         applyScrollerSize()
@@ -222,19 +219,16 @@ class MainActivity : ComponentActivity() {
         // Keyboard insets listener: verify cursor visibility when keyboard appears
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
             val isImeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
-            
+
             if (isImeVisible) {
                 if (scrollToEndWhenKeyboardVisible) {
                     noteScroll.post { scrollToEnd() }
                     scrollToEndWhenKeyboardVisible = false
                 } else if (editText.hasFocus() && !isTextSelectionActionMode) {
-                    // Keyboard slid up, ensure it didn't cover the cursor
-                    noteScroll.postDelayed({ ensureCursorIsVisible() }, 100)
-                } else if (isTextSelectionActionMode) {
-                    editText.postDelayed({ currentActionMode?.invalidate() }, 100)
+                    // Keyboard slid up, ensure cursor is in the ideal viewing zone
+                    noteScroll.postDelayed({ scrollCursorToTargetPosition() }, 100)
                 }
             }
-            
             ViewCompat.onApplyWindowInsets(view, insets)
         }
 
@@ -314,26 +308,12 @@ class MainActivity : ComponentActivity() {
         super.onActionModeStarted(mode)
         isTextSelectionActionMode = true
         currentActionMode = mode
-        
-        if (noteManager.keyboardOnSelect) {
-            val selStart = editText.selectionStart
-            val selEnd = editText.selectionEnd
-            showKeyboard()
-            
-            editText.postDelayed({
-                if (editText.selectionStart == editText.selectionEnd || editText.selectionStart == -1) {
-                    try {
-                        editText.setSelection(
-                            selStart.coerceIn(0, editText.text.length),
-                            selEnd.coerceIn(0, editText.text.length)
-                        )
-                    } catch (_: Exception) {}
-                }
-                currentActionMode?.invalidate()
-            }, 300)
-        } else {
+
+        if (!noteManager.keyboardOnSelect) {
             hideKeyboard()
         }
+        // If keyboardOnSelect is true, we do NOTHING. 
+        // The system naturally keeps the keyboard open without destroying the Paste menu.
     }
 
     override fun onActionModeFinished(mode: ActionMode?) {
@@ -497,27 +477,26 @@ class MainActivity : ComponentActivity() {
     // ===========================
 
     private fun setupClickToFocus() {
+        // Tapping the empty space below the text focuses the editor
         findViewById<View>(R.id.note_content).setOnClickListener {
             if (!isTextSelectionActionMode) {
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                showKeyboard()
             }
         }
-        
-        // Use OnTouchListener to bypass Android consuming the first tap for "focus"
+
+        // Piggyback on EditText touches to adjust ScrollView position
         editText.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
-                // Post slight delay so EditText handles cursor placement first
                 editText.postDelayed({
-                    // Only show keyboard if we are not actively highlighting a word
+                    // Only adjust scroll if it's a simple tap, not a text selection
                     if (!isTextSelectionActionMode && editText.selectionStart == editText.selectionEnd) {
-                        showKeyboard()
-                        ensureCursorIsVisible()
+                        scrollCursorToTargetPosition()
                     }
                 }, 50)
             }
-            false // Must return false so standard text selection and scrolling still work
+            // CRITICAL: Return false so EditText natively handles cursor placement and long-press selection
+            false 
         }
     }
 
@@ -656,6 +635,35 @@ class MainActivity : ComponentActivity() {
     private fun scrollToEnd() {
         val maxScroll = noteScroll.getMaxScroll()
         if (maxScroll > 0) noteScroll.scrollTo(0, maxScroll)
+    }
+    
+    /**
+     * Scrolls the note so the cursor rests at ~75% down the visible screen,
+     * keeping it comfortably above the keyboard/toolbar/slot bar.
+     */
+    private fun scrollCursorToTargetPosition() {
+        val layout = editText.layout ?: return
+        val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
+        val line = layout.getLineForOffset(cursorPos)
+        val lineTop = layout.getLineTop(line)
+        
+        val cursorAbsoluteTop = editText.top + lineTop
+        val currentScrollY = noteScroll.scrollY
+        val visibleHeight = noteScroll.height
+        
+        // Where the cursor currently appears on the screen
+        val currentCursorScreenY = cursorAbsoluteTop - currentScrollY
+        
+        // We want the cursor to be in the 65% - 85% zone of the screen
+        val idealZoneTop = visibleHeight * 0.65
+        val idealZoneBottom = visibleHeight * 0.85
+        
+        // Only scroll if it's outside the comfortable zone (prevents jitter on tiny taps)
+        if (currentCursorScreenY < idealZoneTop || currentCursorScreenY > idealZoneBottom) {
+            val targetYOnScreen = (visibleHeight * 0.75).toInt()
+            val targetScrollY = cursorAbsoluteTop - targetYOnScreen
+            noteScroll.smoothScrollTo(0, targetScrollY.coerceAtLeast(0).coerceAtMost(noteScroll.getMaxScroll()))
+        }
     }
 
     /**
