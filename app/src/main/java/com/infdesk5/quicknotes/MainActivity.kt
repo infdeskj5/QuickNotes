@@ -1,32 +1,44 @@
 package com.infdesk5.quicknotes
 
+import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
 import android.text.Editable
+import android.text.Spannable
 import android.text.TextWatcher
+import android.text.style.BackgroundColorSpan
+import android.util.TypedValue
 import android.view.ActionMode
+import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.TextView
 import android.widget.Toast
 import android.widget.Toolbar
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
-import com.infdesk5.quicknotes.helpers.BottomDialogHelper
-import com.infdesk5.quicknotes.helpers.KeyboardHelper
-import com.infdesk5.quicknotes.helpers.NoteDialogHelper
-import com.infdesk5.quicknotes.helpers.SearchHelper
-import com.infdesk5.quicknotes.helpers.SettingsHelper
 import com.infdesk5.quicknotes.model.Note
 import com.infdesk5.quicknotes.storage.NoteManager
 import com.infdesk5.quicknotes.storage.StorageMode
@@ -45,12 +57,13 @@ class MainActivity : ComponentActivity() {
         private const val KEY_EDIT_TEXT = "edit_text"
         private const val KEY_LAST_SAVED_TEXT = "last_saved_text"
         private const val AUTOSAVE_DELAY_MS = 700L
+        private const val SCROLL_TO_END_TIMEOUT_MS = 1200L
         private const val MAX_TOP_INSET_PERCENT = 90
         private const val EXTRA_NOTE_ID = "extra_note_id"
         private const val CURSOR_BOTTOM_MARGIN_DP = 24
     }
 
-    // === Views ===
+    private lateinit var noteManager: NoteManager
     private lateinit var rootLayout: View
     private lateinit var editText: EditText
     private lateinit var noteScroll: ObservableScrollView
@@ -59,31 +72,35 @@ class MainActivity : ComponentActivity() {
     private lateinit var searchInput: EditText
     private lateinit var fastScroller: View
 
-    // === Core State ===
-    private lateinit var noteManager: NoteManager
+    private var lastKnownWindowHeight = 0
     private var currentNote: Note? = null
     private var allNotes: List<Note> = emptyList()
     private var saveJob: Job? = null
     private var isLoading = false
     private var isProgrammaticTextChange = false
     private var lastSavedText = ""
-    private var lastKnownWindowHeight = 0
-
-    // === Keyboard & Selection State ===
     private var isTextSelectionActionMode = false
+    private var scrollToEndUntil = 0L
     private var scrollToEndWhenKeyboardVisible = false
-    private var cursorScrollSpacer = 0 // Extra bottom room so any line can reach the target spot
+    private var cursorScrollSpacer = 0
 
-    // === Helpers ===
-    private lateinit var keyboardHelper: KeyboardHelper
-    private lateinit var searchHelper: SearchHelper
-    private lateinit var settingsHelper: SettingsHelper
-    private lateinit var noteDialogHelper: NoteDialogHelper
+    private var searchMatches = mutableListOf<Int>()
+    private var currentSearchIndex = 0
+    private var currentSearchQuery = ""
 
-    // === Undo/Redo ===
     private val undoRedo = UndoRedoManager()
 
-    // === Text Watcher ===
+    private val globalLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+        scrollToEndIfRequested()
+        updateFastScroller()
+        val currentHeight = rootLayout.height
+        if (currentHeight > 0 && currentHeight != lastKnownWindowHeight) {
+            lastKnownWindowHeight = currentHeight
+            applyTopInset()
+            applyScrollerSize()
+        }
+    }
+
     private val textWatcher = object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
             if (!isProgrammaticTextChange && !isLoading) {
@@ -96,18 +113,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // === Global Layout Listener ===
-    private val globalLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
-        updateFastScroller()
-        val currentHeight = rootLayout.height
-        if (currentHeight > 0 && currentHeight != lastKnownWindowHeight) {
-            lastKnownWindowHeight = currentHeight
-            applyTopInset()
-            applyScrollerSize()
-        }
-    }
-
-    // === Activity Result Launchers ===
     private val importBackupLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri == null) return@registerForActivityResult
@@ -135,14 +140,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-    // ===========================
-    // LIFECYCLE
-    // ===========================
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
         setActionBar(findViewById<Toolbar>(R.id.toolbar))
         actionBar?.setDisplayShowTitleEnabled(false)
 
@@ -155,58 +155,15 @@ class MainActivity : ComponentActivity() {
         fastScroller = findViewById(R.id.fast_scroller)
 
         noteManager = NoteManager(this, getPreferences(MODE_PRIVATE))
-        keyboardHelper = KeyboardHelper(this)
-
-        searchHelper = SearchHelper(
-            activity = this,
-            editText = editText,
-            noteScroll = noteScroll,
-            searchBar = searchBar,
-            searchInput = searchInput,
-            noteSlotBar = noteSlotBar,
-            noteManager = noteManager,
-            keyboardHelper = keyboardHelper,
-            getNotes = { allNotes },
-            openNote = { openNote(it) },
-            toast = { toast(it) }
-        )
-
-        settingsHelper = SettingsHelper(
-            activity = this,
-            noteManager = noteManager,
-            applyTopInset = { applyTopInset() },
-            applyScrollerSize = { applyScrollerSize() },
-            applyScrollerVisibility = { applyScrollerVisibility() },
-            applyAppColor = { applyAppColor() },
-            updateSlotBar = { updateSlotBar() },
-            toggleStorageMode = { toggleStorageMode() },
-            syncNotes = { syncNotes() },
-            exportBackup = { exportBackup() },
-            launchImportPicker = { importBackupLauncher.launch(arrayOf("application/zip")) },
-            launchFolderPicker = { lifecycleScope.launch { saveCurrentNoteNow(); pickFolderLauncher.launch(null) } },
-            toast = { toast(it) }
-        )
-
-        noteDialogHelper = NoteDialogHelper(
-            activity = this,
-            noteManager = noteManager,
-            getNotes = { allNotes },
-            openNote = { openNote(it) },
-            saveCurrentNote = { saveCurrentNoteNow() },
-            refreshAndOpenLast = { refreshNotes(); openLastNote() },
-            updateSlotBar = { updateSlotBar() },
-            saveNoteOrder = { saveNoteOrder() },
-            toast = { toast(it) }
-        )
 
         setupFastScroller()
         setupClickToFocus()
-        searchHelper.setup()
+        setupSearchBar()
         setupNoteSlotBar()
 
         undoRedo.onAvailabilityChanged = { invalidateOptionsMenu() }
         noteScroll.setSmoothScrollingEnabled(false)
-
+        
         applyTopInset()
         applyAppColor()
         applyScrollerSize()
@@ -215,7 +172,6 @@ class MainActivity : ComponentActivity() {
         noteScroll.onScrollChangedListener = { _, _ -> updateFastScroller() }
         rootLayout.viewTreeObserver.addOnGlobalLayoutListener(globalLayoutListener)
 
-        // Keyboard insets listener: definitively handles scrolling when keyboard appears/disappears
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
             val isImeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
             if (isImeVisible) {
@@ -226,7 +182,7 @@ class MainActivity : ComponentActivity() {
                     noteScroll.post { scrollToCursorAboveSlotBar() }
                 }
             } else {
-                setCursorScrollSpacer(false) // Remove spacer when keyboard is gone
+                setCursorScrollSpacer(false)
             }
             ViewCompat.onApplyWindowInsets(view, insets)
         }
@@ -284,8 +240,8 @@ class MainActivity : ComponentActivity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (searchHelper.isSearchActive) {
-            searchHelper.hide()
+        if (searchBar.visibility == View.VISIBLE) {
+            hideSearch()
         } else {
             super.onBackPressed()
         }
@@ -293,14 +249,11 @@ class MainActivity : ComponentActivity() {
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.action == MotionEvent.ACTION_DOWN) {
+            scrollToEndUntil = 0L
             scrollToEndWhenKeyboardVisible = false
         }
         return super.dispatchTouchEvent(ev)
     }
-
-    // ===========================
-    // TEXT SELECTION / ACTION MODE (ULTIMATE FIX)
-    // ===========================
 
     override fun onActionModeStarted(mode: ActionMode?) {
         super.onActionModeStarted(mode)
@@ -334,10 +287,6 @@ class MainActivity : ComponentActivity() {
         isTextSelectionActionMode = false
     }
 
-    // ===========================
-    // MENU
-    // ===========================
-
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
         return true
@@ -353,36 +302,118 @@ class MainActivity : ComponentActivity() {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
             R.id.action_new -> { createNewNote(); true }
-            R.id.action_search_note -> { searchHelper.show(); true }
-            R.id.action_notes -> { noteDialogHelper.showNotesMenu(); true }
+            R.id.action_search_note -> { showInNoteSearch(); true }
+            R.id.action_notes -> { showNotesMenu(); true }
             R.id.action_undo -> { undo(); true }
             R.id.action_redo -> { redo(); true }
             R.id.action_save -> {
                 lifecycleScope.launch { saveCurrentNoteNow(); toast(getString(R.string.saved)) }
                 true
             }
-            R.id.action_settings -> { settingsHelper.show(); true }
+            R.id.action_settings -> { showSettingsMenu(); true }
             else -> super.onOptionsItemSelected(item)
         }
     }
 
-    // ===========================
-    // NOTE MANAGEMENT
-    // ===========================
-
-    private suspend fun refreshNotes() {
-        allNotes = noteManager.listNotes()
-        updateSlotBar()
-    }
-
-    private fun updateSlotBar() {
-        noteSlotBar.setNotes(allNotes, noteManager.metadata.slotCount, noteManager.appColor, currentNote?.id)
-    }
-
-    private fun setupNoteSlotBar() {
-        noteSlotBar.setOnSlotClickListener { note ->
-            lifecycleScope.launch { openNote(note) }
+    // ===== SETTINGS BOTTOM MENU =====
+    private fun showSettingsMenu() {
+        val items = arrayOf(
+            getString(R.string.top_height),
+            getString(R.string.scroller_size),
+            getString(R.string.show_scroller),
+            getString(R.string.max_slots),
+            getString(R.string.app_color),
+            getString(R.string.search_highlight_color),
+            getString(R.string.current_search_color),
+            getString(R.string.keyboard_on_select),
+            getString(R.string.show_keyboard_on_open),
+            getString(R.string.storage_mode, if (noteManager.storageMode == StorageMode.LOCAL) getString(R.string.storage_local) else getString(R.string.storage_external)),
+            getString(R.string.sync_notes),
+            getString(R.string.import_backup),
+            getString(R.string.export_backup),
+            getString(R.string.choose_folder)
+        )
+        val scrollView = ScrollView(this)
+        val listView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
         }
+        val outValue = TypedValue()
+        theme.resolveAttribute(android.R.attr.selectableItemBackground, outValue, true)
+        items.forEachIndexed { index, title ->
+            val itemView = TextView(this).apply {
+                text = title
+                textSize = 16f
+                setTextColor(ContextCompat.getColor(context, android.R.color.white))
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                setBackgroundResource(outValue.resourceId)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { handleSettingsItemClick(index) }
+            }
+            listView.addView(itemView)
+        }
+        scrollView.addView(listView)
+        val builder = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.settings))
+            .setView(scrollView)
+            .setNegativeButton(getString(R.string.cancel), null)
+        val dialog = builder.create()
+        dialog.show()
+        dialog.window?.setGravity(Gravity.BOTTOM)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        val maxHeight = (resources.displayMetrics.heightPixels * 0.40).toInt()
+        scrollView.post {
+            if (scrollView.height > maxHeight) {
+                scrollView.layoutParams = scrollView.layoutParams.apply { height = maxHeight }
+                scrollView.requestLayout()
+            }
+        }
+    }
+
+    private fun handleSettingsItemClick(index: Int) {
+        when (index) {
+            0 -> showTopHeightDialog()
+            1 -> showScrollerSizeDialog()
+            2 -> { noteManager.showScroller = !noteManager.showScroller; applyScrollerVisibility() }
+            3 -> showSlotCountDialog()
+            4 -> showColorPicker()
+            5 -> showSearchColorPicker(false)
+            6 -> showSearchColorPicker(true)
+            7 -> { noteManager.keyboardOnSelect = !noteManager.keyboardOnSelect; toast(if (noteManager.keyboardOnSelect) "Enabled" else "Disabled") }
+            8 -> { noteManager.showKeyboardOnOpenNote = !noteManager.showKeyboardOnOpenNote; toast(if (noteManager.showKeyboardOnOpenNote) "Enabled" else "Disabled") }
+            9 -> toggleStorageMode()
+            10 -> syncNotes()
+            11 -> importBackupLauncher.launch(arrayOf("application/zip"))
+            12 -> exportBackup()
+            13 -> lifecycleScope.launch { saveCurrentNoteNow(); pickFolderLauncher.launch(null) }
+        }
+    }
+
+    // ===== BOTTOM DIALOG HELPER =====
+    private fun showBottomDialog(title: String, view: View, positiveText: String? = null, onPositive: (() -> Unit)? = null) {
+        val builder = AlertDialog.Builder(this).setTitle(title).setView(view).setNegativeButton(getString(R.string.cancel), null)
+        if (positiveText != null && onPositive != null) builder.setPositiveButton(positiveText) { _, _ -> onPositive() }
+        val dialog = builder.create()
+        dialog.show()
+        dialog.window?.setGravity(Gravity.BOTTOM)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun showBottomDialogSimple(title: String, items: Array<String>, onItemClick: (Int) -> Unit) {
+        val builder = AlertDialog.Builder(this).setTitle(title).setItems(items) { _, which -> onItemClick(which) }.setNegativeButton(getString(R.string.cancel), null)
+        val dialog = builder.create()
+        dialog.show()
+        dialog.window?.setGravity(Gravity.BOTTOM)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    // ===== NOTE MANAGEMENT =====
+    private suspend fun refreshNotes() { allNotes = noteManager.listNotes(); updateSlotBar() }
+    private fun updateSlotBar() { noteSlotBar.setNotes(allNotes, noteManager.metadata.slotCount, noteManager.appColor, currentNote?.id) }
+    
+    private fun setupNoteSlotBar() {
+        noteSlotBar.setOnSlotClickListener { note -> lifecycleScope.launch { openNote(note) } }
         noteSlotBar.setOnSlotReorderListener { from, to ->
             lifecycleScope.launch {
                 val mutableNotes = allNotes.toMutableList()
@@ -399,37 +430,26 @@ class MainActivity : ComponentActivity() {
 
     private fun saveNoteOrder() {
         noteManager.metadata.notes.clear()
-        allNotes.forEachIndexed { i, n ->
-            noteManager.metadata.notes.add(
-                com.infdesk5.quicknotes.model.NoteMetaEntry(n.id, n.name, i, n.slotColor)
-            )
-        }
+        allNotes.forEachIndexed { i, n -> noteManager.metadata.notes.add(com.infdesk5.quicknotes.model.NoteMetaEntry(n.id, n.name, i, n.slotColor)) }
         noteManager.saveMetadata()
     }
 
     private suspend fun openNote(note: Note) {
         saveCurrentNoteNow()
         val text = withContext(Dispatchers.IO) { noteManager.readNote(note) }
-        if (text == null) {
-            toast(getString(R.string.could_not_open_note))
-            return
-        }
-
+        if (text == null) { toast(getString(R.string.could_not_open_note)); return }
         currentNote = note
         editText.visibility = View.INVISIBLE
         setTextWithoutWatcher(text)
         undoRedo.clear()
         lastSavedText = text
-
         editText.post {
             try { editText.setSelection(text.length) } catch (_: Exception) {}
             noteScroll.scrollTo(0, noteScroll.getMaxScroll())
             editText.visibility = View.VISIBLE
-
             if (noteManager.showKeyboardOnOpenNote) {
                 editText.requestFocus()
-                (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-                    .showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
+                showKeyboard()
                 scrollToEndWhenKeyboardVisible = true
             } else {
                 scrollToEnd()
@@ -441,10 +461,7 @@ class MainActivity : ComponentActivity() {
     private suspend fun openNoteById(noteId: String) {
         val note = allNotes.find { it.id == noteId }
         if (note != null) openNote(note)
-        else {
-            refreshNotes()
-            allNotes.find { it.id == noteId }?.let { openNote(it) } ?: openLastNote()
-        }
+        else { refreshNotes(); allNotes.find { it.id == noteId }?.let { openNote(it) } ?: openLastNote() }
     }
 
     private suspend fun openLastNote() {
@@ -458,10 +475,9 @@ class MainActivity : ComponentActivity() {
         val displayName = defaultName.removeSuffix(".txt").removeSuffix(".md")
         input.setText(displayName)
         input.selectAll()
-
-        BottomDialogHelper.show(this, getString(R.string.new_note), BottomDialogHelper.wrapInPadding(this, input), getString(R.string.create)) {
+        showBottomDialog(getString(R.string.new_note), wrapInPadding(input), getString(R.string.create)) {
             val name = input.text.toString().trim()
-            if (name.isEmpty()) { toast(getString(R.string.name_cannot_be_empty)); return@show }
+            if (name.isEmpty()) { toast(getString(R.string.name_cannot_be_empty)); return@showBottomDialog }
             val fullName = if (name.contains('.')) name else "$name.txt"
             lifecycleScope.launch {
                 saveCurrentNoteNow()
@@ -475,89 +491,284 @@ class MainActivity : ComponentActivity() {
                 refreshNotes()
             }
         }
-
-        input.postDelayed({
-            input.requestFocus()
-            input.selectAll()
-            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-                .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
-        }, 300)
+        input.postDelayed({ input.requestFocus(); input.selectAll(); showKeyboardFor(input) }, 300)
     }
 
-    // ===========================
-    // CLICK TO FOCUS (ULTIMATE FIX)
-    // ===========================
+    private fun wrapInPadding(view: View): View {
+        return LinearLayout(this).apply {
+            setPadding(dp(20), dp(12), dp(20), dp(4))
+            addView(view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+    }
 
-    private fun setupClickToFocus() {
-        findViewById<View>(R.id.note_content).setOnClickListener {
-            if (!isTextSelectionActionMode) {
-                val wasKeyboardVisible = isKeyboardVisible()
-                editText.requestFocus()
-                editText.setSelection(editText.text.length)
-                
-                if (!wasKeyboardVisible) {
-                    (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-                        .showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
-                }
-                
-                // If keyboard was already visible, the insets listener won't fire.
-                // We must scroll manually. If it's newly appearing, let the insets listener handle it.
-                if (wasKeyboardVisible) {
-                    editText.postDelayed({
-                        if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
-                    }, 100)
+    private fun showNotesMenu() {
+        lifecycleScope.launch {
+            saveCurrentNoteNow()
+            val notes = noteManager.listNotes()
+            if (notes.isEmpty()) { toast(getString(R.string.no_notes_found)); return@launch }
+            val names = notes.map { it.displayName }.toTypedArray()
+            val builder = AlertDialog.Builder(this@MainActivity)
+                .setTitle(getString(R.string.notes))
+                .setItems(names) { _, which -> lifecycleScope.launch { openNote(notes[which]) } }
+                .setNeutralButton(getString(R.string.search_all_notes)) { _, _ -> showCrossNoteSearch() }
+                .setNegativeButton(getString(R.string.cancel), null)
+            val dialog = builder.create()
+            dialog.show()
+            dialog.window?.setGravity(Gravity.BOTTOM)
+            dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            dialog.listView.setOnItemLongClickListener { _, _, position, _ ->
+                dialog.dismiss()
+                showNoteOptionsDialog(notes[position])
+                true
+            }
+        }
+    }
+
+    private fun showNoteOptionsDialog(note: Note) {
+        val options = arrayOf(getString(R.string.assign_to_slot), getString(R.string.delete), getString(R.string.rename), getString(R.string.create_shortcut))
+        showBottomDialogSimple(note.displayName, options) { which ->
+            when (which) {
+                0 -> assignNoteToSlot(note)
+                1 -> deleteNote(note)
+                2 -> renameNote(note)
+                3 -> createNoteShortcut(note)
+            }
+        }
+    }
+
+    private fun assignNoteToSlot(note: Note) {
+        val maxSlots = noteManager.metadata.slotCount
+        val options = (1..maxSlots).map { "Slot $it" }.toTypedArray()
+        showBottomDialogSimple(getString(R.string.assign_to_slot), options) { which ->
+            lifecycleScope.launch {
+                val mutableNotes = allNotes.toMutableList()
+                val currentIndex = mutableNotes.indexOfFirst { it.id == note.id }
+                if (currentIndex != -1 && currentIndex != which) {
+                    mutableNotes.removeAt(currentIndex)
+                    mutableNotes.add(which, note)
+                    allNotes = mutableNotes
+                    updateSlotBar()
+                    saveNoteOrder()
                 }
             }
         }
+    }
 
-        // Intentionally NOT an OnClickListener: returning false ensures EditText's native 
-        // double-tap word selection and long-press handling run completely untouched.
-        editText.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_UP) {
-                editText.post {
-                    val isSelecting = isTextSelectionActionMode || editText.selectionStart != editText.selectionEnd
-                    if (!isSelecting) {
-                        val wasKeyboardVisible = isKeyboardVisible()
-                        if (!editText.hasFocus()) {
-                            editText.requestFocus()
-                        }
-                        if (!wasKeyboardVisible) {
-                            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-                                .showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
-                        }
-                        if (wasKeyboardVisible) {
-                            editText.postDelayed({
-                                if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
-                            }, 100)
+    private fun deleteNote(note: Note) {
+        val builder = AlertDialog.Builder(this).setTitle(getString(R.string.delete)).setMessage(getString(R.string.delete_note_confirm))
+            .setPositiveButton(getString(R.string.delete)) { _, _ ->
+                lifecycleScope.launch {
+                    if (noteManager.deleteNote(note)) {
+                        toast(getString(R.string.note_deleted))
+                        if (currentNote?.id == note.id) { currentNote = null; openLastNote() }
+                        refreshNotes()
+                    }
+                }
+            }.setNegativeButton(getString(R.string.cancel), null)
+        val dialog = builder.create()
+        dialog.show()
+        dialog.window?.setGravity(Gravity.BOTTOM)
+    }
+
+    private fun renameNote(note: Note) {
+        val input = EditText(this)
+        input.setText(note.displayName)
+        input.selectAll()
+        showBottomDialog(getString(R.string.rename_note), wrapInPadding(input), getString(R.string.rename)) {
+            val newName = input.text.toString().trim()
+            if (newName.isEmpty()) { toast(getString(R.string.name_cannot_be_empty)); return@showBottomDialog }
+            val fullName = if (newName.contains('.')) newName else "$newName.txt"
+            lifecycleScope.launch { noteManager.renameNote(note, fullName); refreshNotes(); updateSlotBar() }
+        }
+        input.postDelayed({ input.requestFocus(); input.selectAll(); showKeyboardFor(input) }, 300)
+    }
+
+    private fun createNoteShortcut(note: Note) {
+        try {
+            val manager = getSystemService(ShortcutManager::class.java)
+            if (manager.isRequestPinShortcutSupported) {
+                val intent = Intent(this, MainActivity::class.java).apply {
+                    action = Intent.ACTION_VIEW
+                    putExtra(EXTRA_NOTE_ID, note.id)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                }
+                val size = (48 * resources.displayMetrics.density).toInt()
+                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                val bgPaint = Paint().apply { color = Color.BLACK; isAntiAlias = true }
+                canvas.drawCircle(size / 2f, size / 2f, size / 2f, bgPaint)
+                val pencil = ContextCompat.getDrawable(this, android.R.drawable.ic_menu_edit)
+                pencil?.setTint(0xFF9C27B0.toInt())
+                pencil?.setBounds(size / 4, size / 4, size * 3 / 4, size * 3 / 4)
+                pencil?.draw(canvas)
+                val shortcut = ShortcutInfo.Builder(this, note.id).setShortLabel(note.displayName).setIcon(android.graphics.drawable.Icon.createWithBitmap(bitmap)).setIntent(intent).build()
+                manager.requestPinShortcut(shortcut, null)
+                toast(getString(R.string.shortcut_created))
+            }
+        } catch (e: Exception) { toast("Shortcut creation failed") }
+    }
+
+    // ===== SEARCH =====
+    private fun setupSearchBar() {
+        findViewById<ImageButton>(R.id.search_prev).setOnClickListener { navigateSearch(-1) }
+        findViewById<ImageButton>(R.id.search_next).setOnClickListener { navigateSearch(1) }
+        findViewById<ImageButton>(R.id.search_close).setOnClickListener { hideSearch() }
+        searchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { performInNoteSearch(s?.toString() ?: "") }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+    }
+
+    private fun showInNoteSearch() {
+        searchBar.visibility = View.VISIBLE
+        noteSlotBar.visibility = View.GONE
+        searchInput.requestFocus()
+        showKeyboardFor(searchInput)
+    }
+
+    private fun hideSearch() {
+        searchBar.visibility = View.GONE
+        noteSlotBar.visibility = View.VISIBLE
+        searchInput.text.clear()
+        clearSearchHighlights()
+        hideKeyboard()
+        editText.requestFocus()
+    }
+
+    private fun performInNoteSearch(query: String) {
+        clearSearchHighlights()
+        searchMatches.clear()
+        currentSearchIndex = 0
+        currentSearchQuery = query
+        if (query.length < 2) return
+        val text = editText.text.toString()
+        var index = text.indexOf(query, 0, true)
+        while (index >= 0) {
+            searchMatches.add(index)
+            index = text.indexOf(query, index + query.length, true)
+        }
+        highlightAllMatches(query)
+        if (searchMatches.isNotEmpty()) navigateSearch(0)
+    }
+
+    private fun highlightAllMatches(query: String) {
+        val spannable = editText.text as? Spannable ?: return
+        val normalColor = noteManager.searchHighlightColor
+        for (matchIndex in searchMatches) {
+            spannable.setSpan(BackgroundColorSpan(normalColor), matchIndex, matchIndex + query.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+
+    private fun highlightCurrentMatch() {
+        val spannable = editText.text as? Spannable ?: return
+        if (searchMatches.isEmpty() || currentSearchIndex >= searchMatches.size) return
+        val currentColor = noteManager.searchCurrentHighlightColor
+        val normalColor = noteManager.searchHighlightColor
+        for ((i, matchIndex) in searchMatches.withIndex()) {
+            val color = if (i == currentSearchIndex) currentColor else normalColor
+            spannable.setSpan(BackgroundColorSpan(color), matchIndex, matchIndex + currentSearchQuery.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+
+    private fun clearSearchHighlights() {
+        val spannable = editText.text as? Spannable ?: return
+        spannable.getSpans(0, spannable.length, BackgroundColorSpan::class.java).forEach { spannable.removeSpan(it) }
+    }
+
+    private fun navigateSearch(direction: Int) {
+        if (searchMatches.isEmpty()) return
+        currentSearchIndex = when {
+            direction > 0 -> (currentSearchIndex + 1) % searchMatches.size
+            direction < 0 -> if (currentSearchIndex <= 0) searchMatches.size - 1 else currentSearchIndex - 1
+            else -> currentSearchIndex
+        }
+        highlightCurrentMatch()
+        val position = searchMatches[currentSearchIndex]
+        editText.setSelection(position, position + currentSearchQuery.length)
+        editText.post {
+            editText.bringPointIntoView(position)
+            val layout = editText.layout ?: return@post
+            val line = layout.getLineForOffset(position)
+            val lineTop = layout.getLineTop(line)
+            val editTextTopInScroll = editText.top
+            val searchBarHeight = if (searchBar.visibility == View.VISIBLE) searchBar.height else 0
+            val visibleHeight = noteScroll.height - searchBarHeight
+            val targetY = editTextTopInScroll + lineTop - (visibleHeight / 3)
+            noteScroll.smoothScrollTo(0, targetY.coerceAtLeast(0))
+        }
+    }
+
+    private fun showCrossNoteSearch() {
+        val input = EditText(this)
+        input.hint = getString(R.string.search_all_notes)
+        showBottomDialog(getString(R.string.search_all_notes), wrapInPadding(input), getString(R.string.ok)) {
+            val query = input.text.toString().trim()
+            if (query.isNotEmpty()) performCrossNoteSearch(query)
+        }
+        input.post { input.requestFocus(); showKeyboardFor(input) }
+    }
+
+    private fun performCrossNoteSearch(query: String) {
+        lifecycleScope.launch {
+            val results = mutableListOf<Triple<Note, String, Int>>()
+            for (note in allNotes) {
+                val content = noteManager.readNote(note) ?: continue
+                val lowerContent = content.lowercase()
+                val lowerQuery = query.lowercase()
+                var index = lowerContent.indexOf(lowerQuery)
+                while (index >= 0) {
+                    val start = maxOf(0, index - 30)
+                    val end = minOf(content.length, index + query.length + 30)
+                    val snippet = (if (start > 0) "…" else "") + content.substring(start, end) + (if (end < content.length) "…" else "")
+                    results.add(Triple(note, snippet, index))
+                    index = lowerContent.indexOf(lowerQuery, index + query.length)
+                }
+            }
+            if (results.isEmpty()) { toast(getString(R.string.no_search_results)); return@launch }
+            val displayTexts = results.map { "📝 ${it.first.displayName}\n   ${it.second}" }.toTypedArray()
+            showBottomDialogSimple(getString(R.string.search_results, results.size, results.map { it.first }.distinct().size), displayTexts) { which ->
+                val (note, _, matchIndex) = results[which]
+                lifecycleScope.launch {
+                    openNote(note)
+                    delay(200)
+                    showInNoteSearch()
+                    searchInput.setText(query)
+                    delay(200)
+                    val targetIdx = searchMatches.indexOfFirst { it >= matchIndex }
+                    if (targetIdx != -1) {
+                        currentSearchIndex = targetIdx
+                        highlightCurrentMatch()
+                        val pos = searchMatches[currentSearchIndex]
+                        editText.setSelection(pos, pos + query.length)
+                        editText.post {
+                            editText.bringPointIntoView(pos)
+                            val layout = editText.layout ?: return@post
+                            val line = layout.getLineForOffset(pos)
+                            val lineTop = layout.getLineTop(line)
+                            val editTextTopInScroll = editText.top
+                            val searchBarHeight = if (searchBar.visibility == View.VISIBLE) searchBar.height else 0
+                            val visibleHeight = noteScroll.height - searchBarHeight
+                            val targetY = editTextTopInScroll + lineTop - (visibleHeight / 3)
+                            noteScroll.smoothScrollTo(0, targetY.coerceAtLeast(0))
                         }
                     }
                 }
             }
-            false // Crucial: let the system handle the touch natively
         }
     }
 
-    // ===========================
-    // SETTINGS ACTIONS
-    // ===========================
-
+    // ===== SETTINGS DIALOGS =====
     private fun toggleStorageMode() {
         val newMode = if (noteManager.storageMode == StorageMode.LOCAL) StorageMode.EXTERNAL else StorageMode.LOCAL
-        if (newMode == StorageMode.EXTERNAL && !noteManager.externalRepo.hasPermission()) {
-            pickFolderLauncher.launch(null)
-            return
-        }
+        if (newMode == StorageMode.EXTERNAL && !noteManager.externalRepo.hasPermission()) { pickFolderLauncher.launch(null); return }
         noteManager.storageMode = newMode
         lifecycleScope.launch { refreshNotes(); openLastNote() }
         invalidateOptionsMenu()
     }
 
     private fun syncNotes() {
-        if (!noteManager.externalRepo.hasPermission()) {
-            toast(getString(R.string.folder_needed))
-            pickFolderLauncher.launch(null)
-            return
-        }
+        if (!noteManager.externalRepo.hasPermission()) { toast(getString(R.string.folder_needed)); pickFolderLauncher.launch(null); return }
         lifecycleScope.launch {
             toast("Syncing…")
             val result = noteManager.syncNotes()
@@ -569,21 +780,84 @@ class MainActivity : ComponentActivity() {
     private fun exportBackup() {
         lifecycleScope.launch {
             val path = noteManager.exportBackup()
-            if (path != null) toast(getString(R.string.backup_exported, path))
-            else toast(getString(R.string.backup_failed))
+            if (path != null) toast(getString(R.string.backup_exported, path)) else toast(getString(R.string.backup_failed))
         }
     }
 
-    // ===========================
-    // APPLY SETTINGS & SCROLLING (ULTIMATE FIX)
-    // ===========================
+    private fun showTopHeightDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_top_height, null)
+        val valueText = view.findViewById<TextView>(R.id.top_height_value)
+        val seekBar = view.findViewById<SeekBar>(R.id.top_height_seek)
+        seekBar.max = MAX_TOP_INSET_PERCENT
+        seekBar.progress = noteManager.topInsetPercent.coerceIn(0, MAX_TOP_INSET_PERCENT)
+        valueText.text = getString(R.string.top_height_value, seekBar.progress)
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) { valueText.text = getString(R.string.top_height_value, p) }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        showBottomDialog(getString(R.string.top_height), view, getString(R.string.save)) { noteManager.topInsetPercent = seekBar.progress; applyTopInset() }
+    }
 
+    private fun showScrollerSizeDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_top_height, null)
+        val valueText = view.findViewById<TextView>(R.id.top_height_value)
+        val seekBar = view.findViewById<SeekBar>(R.id.top_height_seek)
+        seekBar.max = 150
+        seekBar.progress = noteManager.scrollerSizePercent - 50
+        valueText.text = getString(R.string.scroller_size_value, noteManager.scrollerSizePercent)
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) { valueText.text = getString(R.string.scroller_size_value, p + 50) }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        showBottomDialog(getString(R.string.scroller_size), view, getString(R.string.save)) { noteManager.scrollerSizePercent = seekBar.progress + 50; applyScrollerSize() }
+    }
+
+    private fun showSlotCountDialog() {
+        val counts = arrayOf("1", "2", "3", "4", "5", "6", "7", "8")
+        showBottomDialogSimple(getString(R.string.max_slots), counts) { which ->
+            noteManager.metadata = noteManager.metadata.copy(slotCount = which + 1)
+            noteManager.saveMetadata()
+            updateSlotBar()
+        }
+    }
+
+    private fun showColorPicker() {
+        val input = EditText(this)
+        input.hint = "#RRGGBB"
+        input.setText(String.format("#%06X", 0xFFFFFF and noteManager.appColor))
+        input.setSelection(input.text.length)
+        showBottomDialog(getString(R.string.app_color), wrapInPadding(input), getString(R.string.save)) {
+            try {
+                noteManager.appColor = Color.parseColor(input.text.toString().trim())
+                applyAppColor()
+                updateSlotBar()
+            } catch (e: Exception) { toast("Invalid color format") }
+        }
+    }
+
+    private fun showSearchColorPicker(isCurrent: Boolean) {
+        val input = EditText(this)
+        input.hint = "#AARRGGBB or #RRGGBB"
+        val currentColor = if (isCurrent) noteManager.searchCurrentHighlightColor else noteManager.searchHighlightColor
+        input.setText(String.format("#%08X", currentColor))
+        input.setSelection(input.text.length)
+        showBottomDialog(getString(if (isCurrent) R.string.current_search_color else R.string.search_highlight_color), wrapInPadding(input), getString(R.string.save)) {
+            try {
+                val color = Color.parseColor(input.text.toString().trim())
+                if (isCurrent) noteManager.searchCurrentHighlightColor = color else noteManager.searchHighlightColor = color
+                if (searchBar.visibility == View.VISIBLE && currentSearchQuery.isNotEmpty()) { highlightAllMatches(currentSearchQuery); highlightCurrentMatch() }
+            } catch (e: Exception) { toast("Invalid color format") }
+        }
+    }
+
+    // ===== APPLY SETTINGS =====
     private fun applyTopInset() {
         val basePadding = dp(16)
         val percent = noteManager.topInsetPercent.coerceIn(0, MAX_TOP_INSET_PERCENT)
         val availableHeight = if (lastKnownWindowHeight > 0) lastKnownWindowHeight else resources.displayMetrics.heightPixels
         val topInset = (availableHeight * percent / 100f).toInt()
-        // Add cursorScrollSpacer to the bottom padding so the last line can always reach the target zone
         editText.setPadding(basePadding, topInset, basePadding, basePadding + cursorScrollSpacer)
     }
 
@@ -602,28 +876,16 @@ class MainActivity : ComponentActivity() {
         val thumbWidth = (8 * density * percent / 100f).toInt()
         val thumbHeight = (56 * density * percent / 100f).toInt()
         fastScroller.layoutParams = fastScroller.layoutParams.apply { width = scrollerWidth }
-        findViewById<View>(R.id.scroll_thumb).layoutParams =
-            findViewById<View>(R.id.scroll_thumb).layoutParams.apply { width = thumbWidth; height = thumbHeight }
+        findViewById<View>(R.id.scroll_thumb).layoutParams = findViewById<View>(R.id.scroll_thumb).layoutParams.apply { width = thumbWidth; height = thumbHeight }
         fastScroller.requestLayout()
     }
 
-    private fun applyScrollerVisibility() {
-        fastScroller.visibility = if (noteManager.showScroller) View.INVISIBLE else View.GONE
-    }
+    private fun applyScrollerVisibility() { fastScroller.visibility = if (noteManager.showScroller) View.INVISIBLE else View.GONE }
+    private fun applyAppColor() { findViewById<View>(R.id.scroll_thumb)?.background?.setTint(noteManager.appColor) }
 
-    private fun applyAppColor() {
-        findViewById<View>(R.id.scroll_thumb)?.background?.setTint(noteManager.appColor)
-    }
-
-    // ===========================
-    // CORE LOGIC
-    // ===========================
-
-    private fun scheduleSave() {
-        saveJob?.cancel()
-        saveJob = lifecycleScope.launch { delay(AUTOSAVE_DELAY_MS); saveCurrentNoteNow() }
-    }
-
+    // ===== CORE LOGIC =====
+    private fun scheduleSave() { saveJob?.cancel(); saveJob = lifecycleScope.launch { delay(AUTOSAVE_DELAY_MS); saveCurrentNoteNow() } }
+    
     private suspend fun saveCurrentNoteNow() {
         val note = currentNote ?: return
         val text = withContext(Dispatchers.Main) { editText.text.toString() }
@@ -641,41 +903,74 @@ class MainActivity : ComponentActivity() {
 
     private fun undo() {
         val scrollY = noteScroll.scrollY
-        val selStart = editText.selectionStart
-        val selEnd = editText.selectionEnd
+        val selectionStart = editText.selectionStart
+        val selectionEnd = editText.selectionEnd
         val previous = undoRedo.undo(editText.text.toString()) ?: return
         setTextWithoutWatcher(previous)
         try {
             val newLen = editText.text.length
-            editText.setSelection(selStart.coerceAtMost(newLen), selEnd.coerceAtMost(newLen))
+            editText.setSelection(selectionStart.coerceAtMost(newLen), selectionEnd.coerceAtMost(newLen))
         } catch (_: Exception) {}
-        noteScroll.post {
-            noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
-        }
+        noteScroll.post { noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll())) }
         scheduleSave()
         invalidateOptionsMenu()
     }
 
     private fun redo() {
         val scrollY = noteScroll.scrollY
-        val selStart = editText.selectionStart
-        val selEnd = editText.selectionEnd
+        val selectionStart = editText.selectionStart
+        val selectionEnd = editText.selectionEnd
         val next = undoRedo.redo(editText.text.toString()) ?: return
         setTextWithoutWatcher(next)
         try {
             val newLen = editText.text.length
-            editText.setSelection(selStart.coerceAtMost(newLen), selEnd.coerceAtMost(newLen))
+            editText.setSelection(selectionStart.coerceAtMost(newLen), selectionEnd.coerceAtMost(newLen))
         } catch (_: Exception) {}
-        noteScroll.post {
-            noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll()))
-        }
+        noteScroll.post { noteScroll.scrollTo(0, scrollY.coerceAtMost(noteScroll.getMaxScroll())) }
         scheduleSave()
         invalidateOptionsMenu()
+    }
+
+    private fun requestScrollToEnd() {
+        scrollToEndUntil = System.currentTimeMillis() + SCROLL_TO_END_TIMEOUT_MS
+        scrollToEndWhenKeyboardVisible = true
+        scrollToEndIfRequested()
+        noteScroll.postDelayed({ scrollToEndIfRequested() }, 400)
+    }
+
+    private fun scrollToEndIfRequested() {
+        if (isFinishing || isDestroyed) return
+        if (System.currentTimeMillis() < scrollToEndUntil) scrollToEnd()
     }
 
     private fun scrollToEnd() {
         val maxScroll = noteScroll.getMaxScroll()
         if (maxScroll > 0) noteScroll.scrollTo(0, maxScroll)
+    }
+
+    private fun scrollToCursorAboveSlotBar() {
+        setCursorScrollSpacer(true)
+        fun cursorTargetScrollY(): Int? {
+            val visibleHeight = noteScroll.height
+            if (visibleHeight <= 0) return null
+            val layout = editText.layout ?: return null
+            val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
+            val line = layout.getLineForOffset(cursorPos)
+            val lineBounds = Rect()
+            editText.getLineBounds(line, lineBounds)
+            val editTextLoc = IntArray(2)
+            editText.getLocationOnScreen(editTextLoc)
+            val scrollLoc = IntArray(2)
+            noteScroll.getLocationOnScreen(scrollLoc)
+            val lineBottomInContent = noteScroll.scrollY + (editTextLoc[1] - scrollLoc[1]) + lineBounds.bottom
+            val margin = dp(CURSOR_BOTTOM_MARGIN_DP)
+            val targetScrollY = lineBottomInContent + margin - visibleHeight
+            return targetScrollY.coerceIn(0, noteScroll.getMaxScroll().coerceAtLeast(0))
+        }
+        noteScroll.post {
+            cursorTargetScrollY()?.let { noteScroll.smoothScrollTo(0, it) }
+            noteScroll.postDelayed({ cursorTargetScrollY()?.let { noteScroll.scrollTo(0, it) } }, 150)
+        }
     }
 
     private fun setupFastScroller() {
@@ -689,94 +984,78 @@ class MainActivity : ComponentActivity() {
     private fun updateFastScroller() {
         if (!noteManager.showScroller) return
         val scrollThumb = findViewById<View>(R.id.scroll_thumb)
-        FastScrollController(noteScroll, fastScroller, scrollThumb)
-            .update(noteScroll.scrollY, noteScroll.getMaxScroll())
+        FastScrollController(noteScroll, fastScroller, scrollThumb).update(noteScroll.scrollY, noteScroll.getMaxScroll())
+    }
+
+    private fun setupClickToFocus() {
+        findViewById<View>(R.id.note_content).setOnClickListener {
+            if (!isTextSelectionActionMode) {
+                val wasKeyboardVisible = isKeyboardVisible()
+                editText.requestFocus()
+                editText.setSelection(editText.text.length)
+                showKeyboard()
+                if (wasKeyboardVisible) {
+                    editText.postDelayed({ if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar() }, 50)
+                }
+            }
+        }
+        editText.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_UP) {
+                editText.post {
+                    val isSelecting = isTextSelectionActionMode || editText.selectionStart != editText.selectionEnd
+                    if (!isSelecting) {
+                        val wasKeyboardVisible = isKeyboardVisible()
+                        if (!editText.hasFocus()) editText.requestFocus()
+                        showKeyboard()
+                        if (wasKeyboardVisible) {
+                            editText.postDelayed({ if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar() }, 50)
+                        }
+                    }
+                }
+            }
+            false
+        }
     }
 
     private fun setTextWithoutWatcher(text: String) {
-        isLoading = true
-        isProgrammaticTextChange = true
+        isLoading = true; isProgrammaticTextChange = true
         editText.removeTextChangedListener(textWatcher)
         editText.setText(text)
         editText.addTextChangedListener(textWatcher)
-        isLoading = false
-        isProgrammaticTextChange = false
+        isLoading = false; isProgrammaticTextChange = false
     }
 
     private fun setCursorEndAndShowKeyboard() {
         editText.post {
             try { editText.setSelection(editText.text.length) } catch (_: Exception) {}
-            if (editText.text.length == 0) {
-                noteScroll.scrollTo(0, 0)
-            } else {
-                scrollToEnd()
-            }
+            if (editText.text.length == 0) { scrollToEndUntil = 0L; scrollToEndWhenKeyboardVisible = false; noteScroll.scrollTo(0, 0) }
+            else requestScrollToEnd()
             if (noteManager.showKeyboardOnOpenNote) {
                 editText.requestFocus()
-                (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-                    .showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
-                scrollToEndWhenKeyboardVisible = true
+                showKeyboard()
             }
         }
     }
 
-    private fun isKeyboardVisible(): Boolean =
-        ViewCompat.getRootWindowInsets(rootLayout)?.isVisible(WindowInsetsCompat.Type.ime()) == true
-
-    private fun hideKeyboard() {
-        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-            .hideSoftInputFromWindow(editText.windowToken, 0)
-    }
-
-    private fun toast(message: String) {
-        if (!isFinishing && !isDestroyed) {
-            runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
-        }
-    }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    // ===========================
-    // ULTIMATE CURSOR POSITIONING FIX
-    // ===========================
-
-    private fun scrollToCursorAboveSlotBar() {
-        setCursorScrollSpacer(true)
-        editText.post {
-            val layout = editText.layout ?: return@post
-            val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
-            val line = layout.getLineForOffset(cursorPos)
-            
-            // Ask Android for the line's real on-screen bounds. 
-            // This natively accounts for all padding/insets the EditText applies internally.
-            val lineBounds = Rect()
-            editText.getLineBounds(line, lineBounds)
-            
-            // Absolute Y of the cursor line bottom within the ScrollView's content
-            val cursorLineBottom = editText.top + editText.paddingTop + lineBounds.bottom
-            
-            val visibleHeight = noteScroll.height
-            if (visibleHeight <= 0) return@post
-            
-            // We want the cursor line to sit at roughly 70% down the visible area.
-            // This leaves ~30% at the bottom for the slot bar, toolbar, and keyboard.
-            val targetYOnScreen = (visibleHeight * 0.70).toInt()
-            
-            // The scroll Y needed to put the cursor line at targetYOnScreen
-            val targetScrollY = cursorLineBottom - targetYOnScreen
-            
-            noteScroll.smoothScrollTo(0, targetScrollY.coerceIn(0, noteScroll.getMaxScroll()))
-        }
-    }
+    // ===== UTILITIES =====
+    private fun isKeyboardVisible(): Boolean = ViewCompat.getRootWindowInsets(rootLayout)?.isVisible(WindowInsetsCompat.Type.ime()) == true
     
     private fun showKeyboard() {
         if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
-        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-        imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun showKeyboardFor(view: EditText) {
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
     }
 
     private fun hideKeyboard() {
-        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-        imm.hideSoftInputFromWindow(editText.windowToken, 0)
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
     }
+
+    private fun toast(message: String) {
+        if (!isFinishing && !isDestroyed) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
