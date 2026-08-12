@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
             if (!isProgrammaticTextChange && !isLoading) {
                 undoRedo.beforeUserTextChanged(s?.toString() ?: "", count, after)
-.            }
+            }
         }
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
         override fun afterTextChanged(s: Editable?) {
@@ -305,32 +305,24 @@ class MainActivity : ComponentActivity() {
     override fun onActionModeStarted(mode: ActionMode?) {
         super.onActionModeStarted(mode)
         isTextSelectionActionMode = true
-
         if (noteManager.keyboardOnSelect) {
             if (!isKeyboardVisible()) {
                 val selStart = editText.selectionStart
                 val selEnd = editText.selectionEnd
-
-                // Show keyboard
-                (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-                    .showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
-
-                // Restore selection and invalidate ActionMode after a short delay.
-                // This prevents the keyboard resize from destroying the copy/paste menu.
-                editText.postDelayed({
+                showKeyboard()
+                rootLayout.postDelayed({
                     if (editText.selectionStart == editText.selectionEnd) {
                         try {
                             editText.setSelection(
                                 selStart.coerceIn(0, editText.text.length),
-                                selEnd.coizeIn(0, editText.text.length)
+                                selEnd.coerceIn(0, editText.text.length)
                             )
                         } catch (_: Exception) {}
                     }
-                    mode?.invalidate() // Forces the floating toolbar to redraw
-                }, 150)
+                    mode?.invalidateContentRect()
+                }, 300)
             } else {
-                // Keyboard already visible, just ensure ActionMode is valid
-                mode?.invalidate()
+                mode?.invalidateContentRect()
             }
         } else {
             hideKeyboard()
