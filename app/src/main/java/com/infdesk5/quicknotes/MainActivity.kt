@@ -941,23 +941,17 @@ class MainActivity : ComponentActivity() {
     }
 
     // ===== CLICK TO FOCUS (old approach that worked for copy/paste) =====
-    // KEY FIX: Uses SHOW_IMPLICIT instead of SHOW_FORCED so hideKeyboard()
-    // in onActionModeStarted can properly dismiss the keyboard.
+    // KEY FIX: Uses postDelayed so onActionModeStarted has time to set
+    // isTextSelectionActionMode = true before we decide whether to show the keyboard.
     private fun setupClickToFocus() {
         findViewById<View>(R.id.note_content).setOnClickListener {
             if (!isTextSelectionActionMode) {
-                val wasKeyboardVisible = isKeyboardVisible()
                 editText.requestFocus()
                 editText.setSelection(editText.text.length)
-                keyboardHelper.showKeyboard(editText)
-                if (wasKeyboardVisible) {
-                    editText.postDelayed({
-                        if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
-                    }, 50)
-                }
+                showKeyboard()
             }
         }
-    
+        
         editText.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
                 // postDelayed (not post) so onActionModeStarted has time to set
@@ -965,21 +959,15 @@ class MainActivity : ComponentActivity() {
                 // show the keyboard. Without the delay, the flag is still false
                 // and the keyboard appears even when the option is disabled.
                 editText.postDelayed({
-                    val isSelecting = isTextSelectionActionMode ||
+                    val isSelecting = isTextSelectionActionMode || 
                             editText.selectionStart != editText.selectionEnd
                     if (!isSelecting) {
-                        val wasKeyboardVisible = isKeyboardVisible()
                         if (!editText.hasFocus()) editText.requestFocus()
-                        keyboardHelper.showKeyboard(editText)
-                        if (wasKeyboardVisible) {
-                            editText.postDelayed({
-                                if (!isTextSelectionActionMode) scrollToCursorAboveSlotBar()
-                            }, 50)
-                        }
+                        showKeyboard()
                     }
                 }, 100)
             }
-            false
+            false // Must return false so standard text selection and scrolling still work
         }
     }
 
