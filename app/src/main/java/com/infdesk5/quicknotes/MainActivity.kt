@@ -79,6 +79,9 @@ class MainActivity : ComponentActivity() {
     private var isTextSelectionActionMode = false
     private var scrollToEndUntil = 0L
     private var scrollToEndWhenKeyboardVisible = false
+    
+    // Tracks the keyboard request so we can cancel it if text selection starts
+    private var showKeyboardRunnable: Runnable? = null 
 
     private var searchMatches = mutableListOf<Int>()
     private var currentSearchIndex = 0
@@ -238,14 +241,24 @@ class MainActivity : ComponentActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
-    // ===== TEXT SELECTION / ACTION MODE (old simple approach that worked) =====
+    // ===== TEXT SELECTION / ACTION MODE =====
     override fun onActionModeStarted(mode: ActionMode?) {
         super.onActionModeStarted(mode)
         isTextSelectionActionMode = true
+        
+        // Cancel the tap-to-show-keyboard runnable if text selection is activated
+        showKeyboardRunnable?.let { 
+            editText.removeCallbacks(it) 
+            showKeyboardRunnable = null
+        }
+        
         if (noteManager.keyboardOnSelect) {
             showKeyboard()
         } else {
             hideKeyboard()
+            // Forcefully hide again after a tiny delay to override Android's default 
+            // text selection keyboard popup behavior.
+            editText.postDelayed({ hideKeyboard() }, 100)
         }
     }
 
@@ -940,9 +953,7 @@ class MainActivity : ComponentActivity() {
         FastScrollController(noteScroll, fastScroller, scrollThumb).update(noteScroll.scrollY, noteScroll.getMaxScroll())
     }
 
-    // ===== CLICK TO FOCUS (old approach that worked for copy/paste) =====
-    // KEY FIX: Uses postDelayed so onActionModeStarted has time to set
-    // isTextSelectionActionMode = true before we decide whether to show the keyboard.
+    // ===== CLICK TO FOCUS =====
     private fun setupClickToFocus() {
         findViewById<View>(R.id.note_content).setOnClickListener {
             if (!isTextSelectionActionMode) {
@@ -954,18 +965,23 @@ class MainActivity : ComponentActivity() {
         
         editText.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
-                // postDelayed (not post) so onActionModeStarted has time to set
-                // isTextSelectionActionMode = true before we decide whether to
-                // show the keyboard. Without the delay, the flag is still false
-                // and the keyboard appears even when the option is disabled.
-                editText.postDelayed({
+                
+                // Cancel any pending keyboard show requests that were caused by previous taps
+                showKeyboardRunnable?.let { editText.removeCallbacks(it) }
+                
+                val action = Runnable {
                     val isSelecting = isTextSelectionActionMode || 
                             editText.selectionStart != editText.selectionEnd
                     if (!isSelecting) {
                         if (!editText.hasFocus()) editText.requestFocus()
                         showKeyboard()
                     }
-                }, 100)
+                }
+                showKeyboardRunnable = action
+                // Increase the delay slightly from 100 to 150. This gives the system just enough
+                // time to recognize the second tap of a "double-tap" and start text selection BEFORE
+                // it attempts to fire the keyboard. 
+                editText.postDelayed(action, 150)
             }
             false // Must return false so standard text selection and scrolling still work
         }
