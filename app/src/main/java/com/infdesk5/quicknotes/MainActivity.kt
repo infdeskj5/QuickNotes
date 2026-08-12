@@ -408,7 +408,32 @@ class MainActivity : ComponentActivity() {
     }
 
     // ===== NOTE MANAGEMENT =====
-    private suspend fun refreshNotes() { allNotes = noteManager.listNotes(); updateSlotBar() }
+    private suspend fun refreshNotes() {
+        val rawNotes = noteManager.listNotes()
+        val metaEntries = noteManager.metadata.notes
+        
+        val orderedNotes = mutableListOf<Note>()
+        
+        // 1. Reconstruct the custom order and colors saved in metadata
+        for (meta in metaEntries) {
+            val note = rawNotes.find { it.id == meta.id }
+            if (note != null) {
+                note.slotColor = meta.slotColor // Restore saved slot color
+                orderedNotes.add(note)
+            }
+        }
+        
+        // 2. Append any newly created notes that haven't been assigned a custom slot yet
+        for (note in rawNotes) {
+            if (metaEntries.none { it.id == note.id }) {
+                orderedNotes.add(note)
+            }
+        }
+        
+        allNotes = orderedNotes
+        updateSlotBar()
+    }
+    
     private fun updateSlotBar() { noteSlotBar.setNotes(allNotes, noteManager.metadata.slotCount, noteManager.appColor, currentNote?.id) }
 
     private fun setupNoteSlotBar() {
