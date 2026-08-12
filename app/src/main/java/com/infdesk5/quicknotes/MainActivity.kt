@@ -318,12 +318,26 @@ class MainActivity : ComponentActivity() {
     
         if (noteManager.keyboardOnSelect) {
             if (isKeyboardVisible()) return
+            val selStart = editText.selectionStart
+            val selEnd = editText.selectionEnd
+    
             showKeyboard()
-            // Keyboard appearing resizes the window, which can leave the floating
-            // copy/paste toolbar mispositioned or invisible. Ask it to recompute
-            // its own position — don't touch the selection, that was what was
-            // dismissing the toolbar.
-            rootLayout.postDelayed({ mode?.invalidateContentRect() }, 250)
+    
+            // Showing the keyboard restarts the input connection, which can collapse
+            // the selection as a side effect. Restore it first, then let the floating
+            // toolbar recompute its position now that both the window and the
+            // selection have settled.
+            rootLayout.postDelayed({
+                if (editText.selectionStart == editText.selectionEnd) {
+                    try {
+                        editText.setSelection(
+                            selStart.coerceIn(0, editText.text.length),
+                            selEnd.coerceIn(0, editText.text.length)
+                        )
+                    } catch (_: Exception) {}
+                }
+                mode?.invalidateContentRect()
+            }, 300)
         } else {
             hideKeyboard()
         }
@@ -681,15 +695,15 @@ class MainActivity : ComponentActivity() {
         val visibleHeight = noteScroll.height
         if (visibleHeight <= 0) return
     
-        // Guarantee there's always enough scroll room, even on a short note or
-        // when the cursor is on the very first line.
         setCursorScrollSpacer(true)
     
         noteScroll.post {
             val layout = editText.layout ?: return@post
             val cursorPos = editText.selectionEnd.coerceIn(0, editText.text.length)
             val line = layout.getLineForOffset(cursorPos)
-            val lineBottom = editText.top + layout.getLineBottom(line)
+            // Layout coordinates start below the EditText's own top padding
+            // (your "Top height" setting) — that offset was missing before.
+            val lineBottom = editText.top + editText.totalPaddingTop + layout.getLineBottom(line)
     
             val margin = dp(CURSOR_BOTTOM_MARGIN_DP)
             val targetScrollY = lineBottom + margin - visibleHeight
