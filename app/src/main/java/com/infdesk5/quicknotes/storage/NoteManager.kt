@@ -17,6 +17,7 @@ class NoteManager(
     private val context: Context,
     private val prefs: SharedPreferences
 ) {
+
     companion object {
         private const val KEY_STORAGE_MODE = "storage_mode"
         private const val KEY_TREE_URI = "tree_uri"
@@ -30,6 +31,13 @@ class NoteManager(
         private const val KEY_SEARCH_CURRENT_HIGHLIGHT = "search_current_highlight"
         private const val KEY_SHOW_KEYBOARD_ON_OPEN = "show_keyboard_on_open_note"
 
+        private const val KEY_LAST_NOTE_ID = "last_note_id"
+        private const val KEY_SLOT_SCROLL_X = "slot_scroll_x"
+        private const val KEY_SLOT_MAX_CHARS = "slot_max_chars"
+        private const val KEY_LAST_SCROLL_Y = "last_scroll_y"
+        private const val KEY_LAST_SELECTION_START = "last_selection_start"
+        private const val KEY_LAST_SELECTION_END = "last_selection_end"
+
         private const val DEFAULT_APP_COLOR = 0xFF1E8E3E.toInt()
     }
 
@@ -37,7 +45,9 @@ class NoteManager(
     val externalRepo = ExternalNoteRepository(context, getTreeUri())
 
     var storageMode: StorageMode
-        get() = StorageMode.valueOf(prefs.getString(KEY_STORAGE_MODE, StorageMode.LOCAL.name) ?: StorageMode.LOCAL.name)
+        get() = StorageMode.valueOf(
+            prefs.getString(KEY_STORAGE_MODE, StorageMode.LOCAL.name) ?: StorageMode.LOCAL.name
+        )
         set(value) = prefs.edit().putString(KEY_STORAGE_MODE, value.name).apply()
 
     val activeRepository: NoteRepository
@@ -51,7 +61,7 @@ class NoteManager(
     var appColor: Int
         get() = prefs.getInt(KEY_APP_COLOR, DEFAULT_APP_COLOR)
         set(value) = prefs.edit().putInt(KEY_APP_COLOR, value).apply()
-        
+
     var showKeyboardOnOpenNote: Boolean
         get() = prefs.getBoolean(KEY_SHOW_KEYBOARD_ON_OPEN, true)
         set(value) = prefs.edit().putBoolean(KEY_SHOW_KEYBOARD_ON_OPEN, value).apply()
@@ -73,12 +83,36 @@ class NoteManager(
         set(value) = prefs.edit().putBoolean(KEY_KEYBOARD_ON_SELECT, value).apply()
 
     var searchHighlightColor: Int
-        get() = prefs.getInt(KEY_SEARCH_HIGHLIGHT, 0x809C27B0.toInt()) // Default Purple
+        get() = prefs.getInt(KEY_SEARCH_HIGHLIGHT, 0x809C27B0.toInt())
         set(value) = prefs.edit().putInt(KEY_SEARCH_HIGHLIGHT, value).apply()
 
     var searchCurrentHighlightColor: Int
-        get() = prefs.getInt(KEY_SEARCH_CURRENT_HIGHLIGHT, 0xCCE040FB.toInt()) // Default Bright Pink/Purple
+        get() = prefs.getInt(KEY_SEARCH_CURRENT_HIGHLIGHT, 0xCCE040FB.toInt())
         set(value) = prefs.edit().putInt(KEY_SEARCH_CURRENT_HIGHLIGHT, value).apply()
+
+    var lastNoteId: String?
+        get() = prefs.getString(KEY_LAST_NOTE_ID, null)
+        set(value) = prefs.edit().putString(KEY_LAST_NOTE_ID, value).apply()
+
+    var slotScrollX: Int
+        get() = prefs.getInt(KEY_SLOT_SCROLL_X, 0)
+        set(value) = prefs.edit().putInt(KEY_SLOT_SCROLL_X, value).apply()
+
+    var slotMaxChars: Int
+        get() = prefs.getInt(KEY_SLOT_MAX_CHARS, 0)
+        set(value) = prefs.edit().putInt(KEY_SLOT_MAX_CHARS, value).apply()
+
+    var lastScrollY: Int
+        get() = prefs.getInt(KEY_LAST_SCROLL_Y, 0)
+        set(value) = prefs.edit().putInt(KEY_LAST_SCROLL_Y, value).apply()
+
+    var lastSelectionStart: Int
+        get() = prefs.getInt(KEY_LAST_SELECTION_START, 0)
+        set(value) = prefs.edit().putInt(KEY_LAST_SELECTION_START, value).apply()
+
+    var lastSelectionEnd: Int
+        get() = prefs.getInt(KEY_LAST_SELECTION_END, 0)
+        set(value) = prefs.edit().putInt(KEY_LAST_SELECTION_END, value).apply()
 
     fun getTreeUri() = prefs.getString(KEY_TREE_URI, null)?.let { android.net.Uri.parse(it) }
 
@@ -97,6 +131,7 @@ class NoteManager(
     }
 
     suspend fun listNotes(): List<Note> = activeRepository.listNotes()
+
     suspend fun readNote(note: Note): String? = activeRepository.readNote(note)
 
     suspend fun writeNote(note: Note, content: String): Boolean {
@@ -106,27 +141,40 @@ class NoteManager(
     }
 
     suspend fun createNote(name: String): Note? = activeRepository.createNote(name)
+
     suspend fun deleteNote(note: Note): Boolean = activeRepository.deleteNote(note)
-    suspend fun renameNote(note: Note, newName: String): Boolean = activeRepository.renameNote(note, newName)
+
+    suspend fun renameNote(note: Note, newName: String): Boolean =
+        activeRepository.renameNote(note, newName)
 
     suspend fun syncNotes(): SyncResult = withContext(Dispatchers.IO) {
         val localNotes = localRepo.listNotes()
         val externalNotes = externalRepo.listNotes()
-        var copied = 0; var updated = 0
+
+        var copied = 0
+        var updated = 0
 
         for (extNote in externalNotes) {
             val localMatch = localNotes.find { it.name == extNote.name }
+
             if (localMatch == null) {
                 val content = externalRepo.readNote(extNote)
                 if (content != null) {
                     localRepo.createNote(extNote.name)?.let {
-                        localRepo.writeNote(it, content); copied++
+                        localRepo.writeNote(it, content)
+                        copied++
                     }
                 }
             } else if (extNote.lastModified > localMatch.lastModified) {
-                externalRepo.readNote(extNote)?.let { localRepo.writeNote(localMatch, it); updated++ }
+                externalRepo.readNote(extNote)?.let {
+                    localRepo.writeNote(localMatch, it)
+                    updated++
+                }
             } else if (localMatch.lastModified > extNote.lastModified) {
-                localRepo.readNote(localMatch)?.let { externalRepo.writeNote(extNote, it); updated++ }
+                localRepo.readNote(localMatch)?.let {
+                    externalRepo.writeNote(extNote, it)
+                    updated++
+                }
             }
         }
 
@@ -134,11 +182,13 @@ class NoteManager(
             if (externalNotes.none { it.name == localNote.name }) {
                 localRepo.readNote(localNote)?.let { content ->
                     externalRepo.createNote(localNote.name)?.let {
-                        externalRepo.writeNote(it, content); copied++
+                        externalRepo.writeNote(it, content)
+                        copied++
                     }
                 }
             }
         }
+
         SyncResult(copied, updated)
     }
 
@@ -150,10 +200,12 @@ class NoteManager(
 
             val timestamp = System.currentTimeMillis()
             val fileName = "quicknotes_backup_$timestamp.zip"
+
             val backupFile = backupsDir.createFile("application/zip", fileName)
-            ?: return@withContext null
+                ?: return@withContext null
 
             val notes = localRepo.listNotes()
+
             val baos = ByteArrayOutputStream()
 
             ZipOutputStream(baos).use { zip ->
@@ -188,27 +240,33 @@ class NoteManager(
             if (backups.isEmpty()) return@withContext false
 
             val latestBackup = backups.first()
+
             val inputStream = context.contentResolver.openInputStream(latestBackup.uri)
-            ?: return@withContext false
+                ?: return@withContext false
 
             ZipInputStream(inputStream).use { zip ->
                 var entry = zip.nextEntry
+
                 while (entry != null) {
                     val content = zip.readBytes().toString(Charsets.UTF_8)
+
                     val note = localRepo.createNote(entry.name)
                         ?: localRepo.listNotes().find { it.name == entry.name }
+
                     if (note != null) {
                         localRepo.writeNote(note, content)
                     }
+
                     entry = zip.nextEntry
                 }
             }
+
             true
         } catch (e: Exception) {
             false
         }
     }
-    
+
     suspend fun importBackupFromUri(uri: android.net.Uri): Boolean = withContext(Dispatchers.IO) {
         try {
             val inputStream = context.contentResolver.openInputStream(uri)
@@ -216,18 +274,23 @@ class NoteManager(
 
             ZipInputStream(inputStream).use { zip ->
                 var entry = zip.nextEntry
+
                 while (entry != null) {
                     if (!entry.isDirectory) {
                         val content = zip.readBytes().toString(Charsets.UTF_8)
+
                         val note = localRepo.createNote(entry.name)
                             ?: localRepo.listNotes().find { it.name == entry.name }
+
                         if (note != null) {
                             localRepo.writeNote(note, content)
                         }
                     }
+
                     entry = zip.nextEntry
                 }
             }
+
             true
         } catch (e: Exception) {
             false
