@@ -18,8 +18,6 @@ import android.text.style.BackgroundColorSpan
 import android.util.TypedValue
 import android.view.ActionMode
 import android.view.Gravity
-import android.view.Menu
-import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -73,6 +71,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var searchInput: EditText
     private lateinit var fastScroller: View
 
+    private lateinit var btnSave: View
+    private lateinit var btnNew: View
+    private lateinit var btnSearchNote: View
+    private lateinit var btnNotes: View
+    private lateinit var btnUndo: View
+    private lateinit var btnRedo: View
+    private lateinit var btnSettings: View
+
     private var currentNote: Note? = null
     private var allNotes: List<Note> = emptyList()
 
@@ -86,8 +92,10 @@ class MainActivity : ComponentActivity() {
     private var scrollToEndWhenKeyboardVisible = false
 
     private var restoringLastNote = false
+    private var pendingKeyboardOnResume = false
 
     private var showKeyboardRunnable: Runnable? = null
+    private var keyboardRetryRunnable: Runnable? = null
 
     private var searchMatches = mutableListOf<Int>()
     private var currentSearchIndex = 0
@@ -149,6 +157,7 @@ class MainActivity : ComponentActivity() {
 
         setActionBar(findViewById<Toolbar>(R.id.toolbar))
         actionBar?.setDisplayShowTitleEnabled(false)
+        actionBar?.setDisplayShowHomeEnabled(false)
 
         rootLayout = findViewById(R.id.root_layout)
         noteScroll = findViewById(R.id.note_scroll)
@@ -158,16 +167,26 @@ class MainActivity : ComponentActivity() {
         searchInput = findViewById(R.id.search_input)
         fastScroller = findViewById(R.id.fast_scroller)
 
+        btnSave = findViewById(R.id.btn_save)
+        btnNew = findViewById(R.id.btn_new)
+        btnSearchNote = findViewById(R.id.btn_search_note)
+        btnNotes = findViewById(R.id.btn_notes)
+        btnUndo = findViewById(R.id.btn_undo)
+        btnRedo = findViewById(R.id.btn_redo)
+        btnSettings = findViewById(R.id.btn_settings)
+
         editText.showSoftInputOnFocus = false
 
         noteManager = NoteManager(this, getPreferences(MODE_PRIVATE))
 
+        setupToolbarButtons()
         setupFastScroller()
         setupClickToFocus()
         setupSearchBar()
         setupNoteSlotBar()
 
-        undoRedo.onAvailabilityChanged = { invalidateOptionsMenu() }
+        undoRedo.onAvailabilityChanged = { updateToolbarButtons() }
+        updateToolbarButtons()
 
         noteScroll.setSmoothScrollingEnabled(false)
 
@@ -240,9 +259,13 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        pendingKeyboardOnResume = false
+        cancelKeyboardRetries()
+
         saveLastUiState()
         saveJob?.cancel()
         saveCurrentNoteBlocking()
+
         super.onPause()
     }
 
@@ -259,8 +282,29 @@ class MainActivity : ComponentActivity() {
             searchBar.visibility != View.VISIBLE &&
             noteManager.showKeyboardOnOpenNote
         ) {
-            editText.requestFocus()
-            showKeyboard()
+            if (hasWindowFocus()) {
+                rootLayout.post { showKeyboardReliably() }
+            } else {
+                pendingKeyboardOnResume = true
+            }
+        } else {
+            pendingKeyboardOnResume = false
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+
+        if (hasFocus && pendingKeyboardOnResume) {
+            pendingKeyboardOnResume = false
+
+            if (
+                currentNote != null &&
+                searchBar.visibility != View.VISIBLE &&
+                noteManager.showKeyboardOnOpenNote
+            ) {
+                rootLayout.post { showKeyboardReliably() }
+            }
         }
     }
 
@@ -268,12 +312,12 @@ class MainActivity : ComponentActivity() {
         super.onConfigurationChanged(newConfig)
 
         rootLayout.post {
-            invalidateOptionsMenu()
             applyTopInset()
             applyScrollerSize()
             applyScrollerVisibility()
             updateFastScroller()
             updateSlotBar()
+            updateToolbarButtons()
         }
     }
 
@@ -298,6 +342,7 @@ class MainActivity : ComponentActivity() {
         if (ev.action == MotionEvent.ACTION_DOWN) {
             scrollToEndUntil = 0L
             scrollToEndWhenKeyboardVisible = false
+            cancelKeyboardRetries()
         }
 
         return super.dispatchTouchEvent(ev)
@@ -315,6 +360,8 @@ class MainActivity : ComponentActivity() {
             showKeyboardRunnable = null
         }
 
+        cancelKeyboardRetries()
+
         if (noteManager.keyboardOnSelect) {
             showKeyboard()
         } else {
@@ -327,64 +374,47 @@ class MainActivity : ComponentActivity() {
         isTextSelectionActionMode = false
     }
 
-    // ===== MENU =====
+    // ===== CUSTOM TOOLBAR =====
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.main_menu, menu)
-        return true
-    }
-
-    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
-        super.onPrepareOptionsMenu(menu)
-
-        menu.findItem(R.id.action_undo)?.isEnabled = undoRedo.canUndo
-        menu.findItem(R.id.action_redo)?.isEnabled = undoRedo.canRedo
-
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            R.id.action_new -> {
-                createNewNote()
-                true
+    private fun setupToolbarButtons() {
+        btnSave.setOnClickListener {
+            lifecycleScope.launch {
+                saveCurrentNoteNow()
+                toast(getString(R.string.saved))
             }
-
-            R.id.action_search_note -> {
-                showInNoteSearch()
-                true
-            }
-
-            R.id.action_notes -> {
-                showNotesMenu()
-                true
-            }
-
-            R.id.action_undo -> {
-                undo()
-                true
-            }
-
-            R.id.action_redo -> {
-                redo()
-                true
-            }
-
-            R.id.action_save -> {
-                lifecycleScope.launch {
-                    saveCurrentNoteNow()
-                    toast(getString(R.string.saved))
-                }
-                true
-            }
-
-            R.id.action_settings -> {
-                showSettingsMenu()
-                true
-            }
-
-            else -> super.onOptionsItemSelected(item)
         }
+
+        btnNew.setOnClickListener {
+            createNewNote()
+        }
+
+        btnSearchNote.setOnClickListener {
+            showInNoteSearch()
+        }
+
+        btnNotes.setOnClickListener {
+            showNotesMenu()
+        }
+
+        btnUndo.setOnClickListener {
+            undo()
+        }
+
+        btnRedo.setOnClickListener {
+            redo()
+        }
+
+        btnSettings.setOnClickListener {
+            showSettingsMenu()
+        }
+    }
+
+    private fun updateToolbarButtons() {
+        btnUndo.isEnabled = undoRedo.canUndo
+        btnRedo.isEnabled = undoRedo.canRedo
+
+        btnUndo.alpha = if (undoRedo.canUndo) 1f else 0.35f
+        btnRedo.alpha = if (undoRedo.canRedo) 1f else 0.35f
     }
 
     // ===== SETTINGS BOTTOM MENU =====
@@ -703,10 +733,7 @@ class MainActivity : ComponentActivity() {
 
                 editText.visibility = View.VISIBLE
 
-                if (noteManager.showKeyboardOnOpenNote) {
-                    editText.requestFocus()
-                    showKeyboard()
-                }
+                requestNoteKeyboard()
             } else {
                 try {
                     editText.setSelection(text.length)
@@ -717,10 +744,7 @@ class MainActivity : ComponentActivity() {
                 editText.visibility = View.VISIBLE
                 requestScrollToEnd()
 
-                if (noteManager.showKeyboardOnOpenNote) {
-                    editText.requestFocus()
-                    showKeyboard()
-                }
+                requestNoteKeyboard()
             }
         }
 
@@ -1269,7 +1293,7 @@ class MainActivity : ComponentActivity() {
             openLastNote()
         }
 
-        invalidateOptionsMenu()
+        updateToolbarButtons()
     }
 
     private fun syncNotes() {
@@ -1380,11 +1404,6 @@ class MainActivity : ComponentActivity() {
         val valueText = view.findViewById<TextView>(R.id.top_height_value)
         val seekBar = view.findViewById<SeekBar>(R.id.top_height_seek)
 
-        // 0 = Automatic
-        // 1 = 3 characters
-        // 2 = 4 characters
-        // ...
-        // 10 = 12 characters
         seekBar.max = 10
 
         val current = noteManager.slotMaxChars
@@ -1610,7 +1629,7 @@ class MainActivity : ComponentActivity() {
         }
 
         scheduleSave()
-        invalidateOptionsMenu()
+        updateToolbarButtons()
     }
 
     private fun redo() {
@@ -1637,7 +1656,7 @@ class MainActivity : ComponentActivity() {
         }
 
         scheduleSave()
-        invalidateOptionsMenu()
+        updateToolbarButtons()
     }
 
     private fun requestScrollToEnd() {
@@ -1747,17 +1766,26 @@ class MainActivity : ComponentActivity() {
                 requestScrollToEnd()
             }
 
-            if (noteManager.showKeyboardOnOpenNote) {
-                editText.requestFocus()
-                showKeyboard()
-            }
+            requestNoteKeyboard()
         }
     }
 
-    // ===== UTILITIES =====
+    // ===== KEYBOARD UTILITIES =====
 
     private fun isKeyboardVisible(): Boolean =
         ViewCompat.getRootWindowInsets(rootLayout)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+
+    private fun requestNoteKeyboard() {
+        if (!noteManager.showKeyboardOnOpenNote) return
+        if (searchBar.visibility == View.VISIBLE) return
+        if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
+
+        if (!hasWindowFocus()) {
+            pendingKeyboardOnResume = true
+        }
+
+        showKeyboardReliably()
+    }
 
     private fun showKeyboard() {
         if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
@@ -1766,14 +1794,63 @@ class MainActivity : ComponentActivity() {
             .showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
     }
 
+    private fun showKeyboardForced() {
+        if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
+
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(editText, InputMethodManager.SHOW_FORCED)
+    }
+
     private fun showKeyboardFor(view: EditText) {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
     }
 
     private fun hideKeyboard() {
+        cancelKeyboardRetries()
+
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(editText.windowToken, 0)
+    }
+
+    private fun showKeyboardReliably() {
+        if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
+        if (searchBar.visibility == View.VISIBLE) return
+
+        editText.requestFocus()
+        showKeyboard()
+
+        cancelKeyboardRetries()
+
+        val delays = listOf(120L, 320L, 650L, 1100L)
+        var attempt = 0
+
+        val runnable = object : Runnable {
+            override fun run() {
+                if (isFinishing || isDestroyed) return
+                if (currentNote == null) return
+                if (searchBar.visibility == View.VISIBLE) return
+
+                if (!isKeyboardVisible()) {
+                    editText.requestFocus()
+                    showKeyboardForced()
+                }
+
+                attempt += 1
+
+                if (attempt < delays.size && !isKeyboardVisible()) {
+                    editText.postDelayed(this, delays[attempt])
+                }
+            }
+        }
+
+        keyboardRetryRunnable = runnable
+        editText.postDelayed(runnable, delays[0])
+    }
+
+    private fun cancelKeyboardRetries() {
+        keyboardRetryRunnable?.let { editText.removeCallbacks(it) }
+        keyboardRetryRunnable = null
     }
 
     private fun toast(message: String) {
