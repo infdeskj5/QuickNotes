@@ -27,6 +27,10 @@
     <string name="note_deleted">Note deleted</string>
     <string name="create_shortcut">Create shortcut</string>
     <string name="shortcut_created">Shortcut created</string>
+    
+    <string name="slot_length">Slot length</string>
+    <string name="slot_length_off">Automatic</string>
+    <string name="slot_length_chars">%1$d characters</string>
 
     <string name="rename">Rename</string>
     <string name="rename_note">Rename note</string>
