@@ -200,11 +200,21 @@ class MainActivity : ComponentActivity() {
         rootLayout.viewTreeObserver.addOnGlobalLayoutListener(globalLayoutListener)
 
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
-            if (insets.isVisible(WindowInsetsCompat.Type.ime()) && scrollToEndWhenKeyboardVisible) {
-                noteScroll.post { scrollToEnd() }
-                scrollToEndWhenKeyboardVisible = false
+            if (insets.isVisible(WindowInsetsCompat.Type.ime())) {
+                if (scrollToEndWhenKeyboardVisible) {
+                    noteScroll.post { scrollToEnd() }
+                    scrollToEndWhenKeyboardVisible = false
+                }
+        
+                if (
+                    currentNote != null &&
+                    searchBar.visibility != View.VISIBLE &&
+                    !isTextSelectionActionMode
+                ) {
+                    bringCursorIntoView()
+                }
             }
-
+        
             ViewCompat.onApplyWindowInsets(view, insets)
         }
 
@@ -706,44 +716,41 @@ class MainActivity : ComponentActivity() {
         lastSavedText = text
 
         editText.post {
-            if (isRestore) {
+            if (isRestore && !noteManager.showKeyboardOnOpenNote) {
                 scrollToEndUntil = 0L
                 scrollToEndWhenKeyboardVisible = false
-
+        
                 val savedStart = noteManager.lastSelectionStart.coerceIn(0, text.length)
                 val savedEnd = noteManager.lastSelectionEnd.coerceIn(0, text.length)
-
+        
                 val start = minOf(savedStart, savedEnd)
                 val end = maxOf(savedStart, savedEnd)
-
+        
                 try {
                     editText.setSelection(start, end)
                 } catch (_: Exception) {
                 }
-
+        
                 val restoreScroll = {
                     noteScroll.scrollTo(
                         0,
                         noteManager.lastScrollY.coerceIn(0, noteScroll.getMaxScroll())
                     )
                 }
-
+        
                 noteScroll.post(restoreScroll)
                 noteScroll.postDelayed(restoreScroll, 150)
-
+        
                 editText.visibility = View.VISIBLE
-
-                requestNoteKeyboard()
             } else {
                 try {
                     editText.setSelection(text.length)
                 } catch (_: Exception) {
                 }
-
+        
                 noteScroll.scrollTo(0, noteScroll.getMaxScroll())
                 editText.visibility = View.VISIBLE
                 requestScrollToEnd()
-
                 requestNoteKeyboard()
             }
         }
@@ -1793,6 +1800,20 @@ class MainActivity : ComponentActivity() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
     }
+    
+    private fun bringCursorIntoView() {
+        if (isFinishing || isDestroyed) return
+        if (searchBar.visibility == View.VISIBLE) return
+        if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
+    
+        val position = maxOf(editText.selectionStart, editText.selectionEnd).coerceAtLeast(0)
+    
+        editText.post {
+            if (!isFinishing && !isDestroyed) {
+                editText.bringPointIntoView(position)
+            }
+        }
+    }
 
     private fun showKeyboardForced() {
         if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
@@ -1816,34 +1837,46 @@ class MainActivity : ComponentActivity() {
     private fun showKeyboardReliably() {
         if (isTextSelectionActionMode && !noteManager.keyboardOnSelect) return
         if (searchBar.visibility == View.VISIBLE) return
-
+    
         editText.requestFocus()
         showKeyboard()
-
+    
+        editText.postDelayed({
+            if (!isFinishing && !isDestroyed && isKeyboardVisible()) {
+                bringCursorIntoView()
+            }
+        }, 250)
+    
         cancelKeyboardRetries()
-
+    
         val delays = listOf(120L, 320L, 650L, 1100L)
         var attempt = 0
-
+    
         val runnable = object : Runnable {
             override fun run() {
                 if (isFinishing || isDestroyed) return
                 if (currentNote == null) return
                 if (searchBar.visibility == View.VISIBLE) return
-
+    
                 if (!isKeyboardVisible()) {
                     editText.requestFocus()
                     showKeyboardForced()
                 }
-
+    
+                editText.postDelayed({
+                    if (!isFinishing && !isDestroyed && isKeyboardVisible()) {
+                        bringCursorIntoView()
+                    }
+                }, 150)
+    
                 attempt += 1
-
+    
                 if (attempt < delays.size && !isKeyboardVisible()) {
                     editText.postDelayed(this, delays[attempt])
                 }
             }
         }
-
+    
         keyboardRetryRunnable = runnable
         editText.postDelayed(runnable, delays[0])
     }
