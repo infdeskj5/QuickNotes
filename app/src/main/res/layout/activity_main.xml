@@ -43,7 +43,7 @@
 
         </com.infdesk5.quicknotes.ObservableScrollView>
 
-        <!-- In-note search bar (hidden by default) -->
+        <!-- In-note search bar -->
         <LinearLayout
             android:id="@+id/search_bar"
             android:layout_width="match_parent"
@@ -113,7 +113,7 @@
 
     </LinearLayout>
 
-    <!-- Fast Scroller (Lifted to avoid overlapping the 48dp slot bar + 56dp toolbar) -->
+    <!-- Fast Scroller -->
     <FrameLayout
         android:id="@+id/fast_scroller"
         android:layout_width="24dp"
