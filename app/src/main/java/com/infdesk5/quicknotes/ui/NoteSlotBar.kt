@@ -32,8 +32,11 @@ class NoteSlotBar @JvmOverloads constructor(
     private var onSlotClick: ((Note) -> Unit)? = null
     private var onSlotReorder: ((Int, Int) -> Unit)? = null
     private var currentNoteId: String? = null
-
     private var draggedIndex = -1
+
+    private var slotMaxChars: Int = 0
+
+    var onScrollChangedListener: ((Int) -> Unit)? = null
 
     init {
         addView(container, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
@@ -41,30 +44,54 @@ class NoteSlotBar @JvmOverloads constructor(
         setupDragListener()
     }
 
-    fun setNotes(notes: List<Note>, slotCount: Int, appColor: Int, currentNoteId: String?) {
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        onScrollChangedListener?.invoke(l)
+    }
+
+    fun setNotes(
+        notes: List<Note>,
+        slotCount: Int,
+        appColor: Int,
+        currentNoteId: String?,
+        slotMaxChars: Int = 0
+    ) {
         this.notes = notes
         this.slotCount = slotCount
         this.appColor = appColor
         this.currentNoteId = currentNoteId
+        this.slotMaxChars = slotMaxChars
         rebuildSlots()
     }
 
-    fun setOnSlotClickListener(listener: (Note) -> Unit) { onSlotClick = listener }
-    fun setOnSlotReorderListener(listener: (Int, Int) -> Unit) { onSlotReorder = listener }
+    fun setOnSlotClickListener(listener: (Note) -> Unit) {
+        onSlotClick = listener
+    }
+
+    fun setOnSlotReorderListener(listener: (Int, Int) -> Unit) {
+        onSlotReorder = listener
+    }
 
     private fun rebuildSlots() {
         container.removeAllViews()
+
         val slotNotes = notes.take(slotCount)
 
         for ((index, note) in slotNotes.withIndex()) {
             val slotView = createSlotView(note, index)
             container.addView(slotView)
-            if (index < slotNotes.size - 1) container.addView(createSpacer())
+
+            if (index < slotNotes.size - 1) {
+                container.addView(createSpacer())
+            }
         }
 
         for (i in slotNotes.size until slotCount) {
             container.addView(createEmptySlot(i))
-            if (i < slotCount - 1) container.addView(createSpacer())
+
+            if (i < slotCount - 1) {
+                container.addView(createSpacer())
+            }
         }
     }
 
@@ -74,11 +101,13 @@ class NoteSlotBar @JvmOverloads constructor(
 
     private fun createSlotView(note: Note, index: Int): TextView {
         val textView = TextView(context).apply {
-            text = note.displayName
+            text = formatSlotName(note.displayName)
+
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(ContextCompat.getColor(context, android.R.color.white))
             gravity = Gravity.CENTER
             setPadding(dp(14), dp(8), dp(14), dp(8))
+
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             maxWidth = dp(140)
@@ -88,26 +117,35 @@ class NoteSlotBar @JvmOverloads constructor(
                 note.slotColor != 0 -> note.slotColor
                 else -> 0xFF333333.toInt()
             }
+
             background = GradientDrawable().apply {
                 cornerRadius = dp(20).toFloat()
                 setColor(bgColor)
             }
+
             elevation = 2f
         }
 
         textView.layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            dp(36)
         )
+
         textView.tag = index
 
-        textView.setOnClickListener { onSlotClick?.invoke(note) }
+        textView.setOnClickListener {
+            onSlotClick?.invoke(note)
+        }
 
         textView.setOnLongClickListener {
             draggedIndex = index
+
             val data = ClipData.newPlainText("index", index.toString())
             val shadow = DragShadowBuilder(textView)
+
             textView.startDragAndDrop(data, shadow, textView, 0)
             textView.visibility = View.INVISIBLE
+
             true
         }
 
@@ -116,11 +154,13 @@ class NoteSlotBar @JvmOverloads constructor(
 
     private fun createEmptySlot(index: Int): View = View(context).apply {
         layoutParams = LinearLayout.LayoutParams(dp(60), dp(36))
+
         background = GradientDrawable().apply {
             cornerRadius = dp(20).toFloat()
             setColor(0xFF222222.toInt())
             setStroke(dp(1), 0xFF444444.toInt())
         }
+
         tag = index
     }
 
@@ -128,24 +168,31 @@ class NoteSlotBar @JvmOverloads constructor(
         container.setOnDragListener { _, event ->
             when (event.action) {
                 DragEvent.ACTION_DRAG_ENDED -> {
-                    // Make sure all views are visible again
                     for (i in 0 until container.childCount) {
                         container.getChildAt(i)?.visibility = View.VISIBLE
                     }
                     true
                 }
+
                 DragEvent.ACTION_DROP -> {
                     val draggedView = event.localState as? View
                     val dropIndex = getDropIndex(event.x)
 
-                    if (draggedView != null && draggedIndex != -1 && dropIndex != -1 && draggedIndex != dropIndex) {
+                    if (
+                        draggedView != null &&
+                        draggedIndex != -1 &&
+                        dropIndex != -1 &&
+                        draggedIndex != dropIndex
+                    ) {
                         onSlotReorder?.invoke(draggedIndex, dropIndex)
                     }
 
                     draggedView?.visibility = View.VISIBLE
                     draggedIndex = -1
+
                     true
                 }
+
                 else -> true
             }
         }
@@ -154,25 +201,35 @@ class NoteSlotBar @JvmOverloads constructor(
     private fun getDropIndex(x: Float): Int {
         var closestIndex = -1
         var minDistance = Float.MAX_VALUE
-    
-        // Iterate through all children to find the closest slot center
+
         for (i in 0 until container.childCount) {
             val child = container.getChildAt(i)
-            
-            // Both populated and empty slots have integer tags (spacers do not)
             val index = child.tag as? Int
+
             if (index != null) {
                 val centerX = child.left + child.width / 2f
                 val distance = kotlin.math.abs(x - centerX)
-                
-                // Track the slot that is closest to the drop point
+
                 if (distance < minDistance) {
                     minDistance = distance
                     closestIndex = index
                 }
             }
         }
+
         return if (closestIndex != -1) closestIndex else 0
+    }
+
+    private fun formatSlotName(name: String): String {
+        if (slotMaxChars <= 0) return name
+
+        // Short names are not affected.
+        if (name.length <= 4) return name
+
+        // No need to truncate if it already fits.
+        if (name.length <= slotMaxChars) return name
+
+        return name.take(slotMaxChars) + "…"
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
