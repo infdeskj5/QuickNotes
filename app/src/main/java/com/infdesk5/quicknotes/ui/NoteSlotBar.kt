@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.infdesk5.quicknotes.model.Note
+import kotlin.math.abs
 
 class NoteSlotBar @JvmOverloads constructor(
     context: Context,
@@ -32,11 +33,30 @@ class NoteSlotBar @JvmOverloads constructor(
     private var onSlotClick: ((Note) -> Unit)? = null
     private var onSlotReorder: ((Int, Int) -> Unit)? = null
     private var currentNoteId: String? = null
-    private var draggedIndex = -1
-
     private var slotMaxChars: Int = 0
 
     var onScrollChangedListener: ((Int) -> Unit)? = null
+
+    // Drag state
+    private var draggedIndex = -1
+    private var draggedTag = -1
+    private var isDragging = false
+    private var dropHandled = false
+
+    // Live visual reorder state
+    private val slotViews = mutableMapOf<Int, View>()
+    private val visualOrder = mutableListOf<Int>()
+    private val desiredLeftByTag = mutableMapOf<Int, Int>()
+
+    // Edge auto-scroll state
+    private var lastDragViewportX = 0f
+    private var edgeScrollDirection = 0
+    private var edgeScrollSpeed = 0
+    private var edgeScrollRunnable: Runnable? = null
+
+    private val edgeSize = dp(48)
+    private val maxEdgeScrollSpeed = dp(12)
+    private val animationDuration = 120L
 
     init {
         addView(container, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
@@ -56,11 +76,15 @@ class NoteSlotBar @JvmOverloads constructor(
         currentNoteId: String?,
         slotMaxChars: Int = 0
     ) {
+        stopEdgeScroll()
+        resetDragStateInternal()
+
         this.notes = notes
         this.slotCount = slotCount
         this.appColor = appColor
         this.currentNoteId = currentNoteId
         this.slotMaxChars = slotMaxChars
+
         rebuildSlots()
     }
 
@@ -75,23 +99,31 @@ class NoteSlotBar @JvmOverloads constructor(
     private fun rebuildSlots() {
         container.removeAllViews()
 
+        slotViews.clear()
+        visualOrder.clear()
+        desiredLeftByTag.clear()
+
         val slotNotes = notes.take(slotCount)
 
-        for ((index, note) in slotNotes.withIndex()) {
-            val slotView = createSlotView(note, index)
-            container.addView(slotView)
-
-            if (index < slotNotes.size - 1) {
-                container.addView(createSpacer())
+        for (i in 0 until slotCount) {
+            val view = if (i < slotNotes.size) {
+                createSlotView(slotNotes[i], i)
+            } else {
+                createEmptySlot(i)
             }
-        }
 
-        for (i in slotNotes.size until slotCount) {
-            container.addView(createEmptySlot(i))
+            slotViews[i] = view
+            visualOrder.add(i)
+
+            container.addView(view)
 
             if (i < slotCount - 1) {
                 container.addView(createSpacer())
             }
+        }
+
+        post {
+            applyVisualOrder(false)
         }
     }
 
@@ -111,6 +143,8 @@ class NoteSlotBar @JvmOverloads constructor(
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             maxWidth = dp(140)
+
+            translationX = 0f
 
             val bgColor = when {
                 note.id == currentNoteId -> appColor
@@ -138,13 +172,26 @@ class NoteSlotBar @JvmOverloads constructor(
         }
 
         textView.setOnLongClickListener {
+            if (isDragging) return@setOnLongClickListener false
+
             draggedIndex = index
+            draggedTag = index
+            isDragging = true
+            dropHandled = false
 
             val data = ClipData.newPlainText("index", index.toString())
             val shadow = DragShadowBuilder(textView)
 
-            textView.startDragAndDrop(data, shadow, textView, 0)
-            textView.visibility = View.INVISIBLE
+            val started = textView.startDragAndDrop(data, shadow, textView, 0)
+
+            if (started) {
+                textView.visibility = View.INVISIBLE
+            } else {
+                draggedIndex = -1
+                draggedTag = -1
+                isDragging = false
+                dropHandled = false
+            }
 
             true
         }
@@ -154,6 +201,8 @@ class NoteSlotBar @JvmOverloads constructor(
 
     private fun createEmptySlot(index: Int): View = View(context).apply {
         layoutParams = LinearLayout.LayoutParams(dp(60), dp(36))
+
+        translationX = 0f
 
         background = GradientDrawable().apply {
             cornerRadius = dp(20).toFloat()
@@ -165,59 +214,244 @@ class NoteSlotBar @JvmOverloads constructor(
     }
 
     private fun setupDragListener() {
-        container.setOnDragListener { _, event ->
-            when (event.action) {
-                DragEvent.ACTION_DRAG_ENDED -> {
-                    for (i in 0 until container.childCount) {
-                        container.getChildAt(i)?.visibility = View.VISIBLE
-                    }
-                    true
+        setOnDragListener { _, event ->
+            handleDragEvent(event)
+        }
+    }
+
+    private fun handleDragEvent(event: DragEvent): Boolean {
+        when (event.action) {
+            DragEvent.ACTION_DRAG_STARTED -> {
+                return isDragging || draggedIndex != -1
+            }
+
+            DragEvent.ACTION_DRAG_LOCATION -> {
+                if (!isDragging) return false
+
+                handleDragLocation(event.x)
+                return true
+            }
+
+            DragEvent.ACTION_DROP -> {
+                if (!isDragging) return false
+
+                stopEdgeScroll()
+
+                dropHandled = true
+
+                val finalTarget = visualOrder.indexOf(draggedTag)
+
+                if (
+                    draggedIndex != -1 &&
+                    finalTarget != -1 &&
+                    finalTarget != draggedIndex
+                ) {
+                    onSlotReorder?.invoke(draggedIndex, finalTarget)
+                } else {
+                    resetVisualState()
+                    dropHandled = true
                 }
 
-                DragEvent.ACTION_DROP -> {
-                    val draggedView = event.localState as? View
-                    val dropIndex = getDropIndex(event.x)
+                isDragging = false
 
-                    if (
-                        draggedView != null &&
-                        draggedIndex != -1 &&
-                        dropIndex != -1 &&
-                        draggedIndex != dropIndex
-                    ) {
-                        onSlotReorder?.invoke(draggedIndex, dropIndex)
-                    }
+                return true
+            }
 
-                    draggedView?.visibility = View.VISIBLE
+            DragEvent.ACTION_DRAG_ENDED -> {
+                stopEdgeScroll()
+
+                if (!dropHandled) {
+                    resetVisualState()
+                } else {
                     draggedIndex = -1
-
-                    true
+                    draggedTag = -1
+                    isDragging = false
+                    dropHandled = false
                 }
 
-                else -> true
+                return true
+            }
+
+            else -> return true
+        }
+    }
+
+    private fun handleDragLocation(viewportX: Float) {
+        if (!isDragging || draggedTag == -1 || width <= 0) return
+
+        lastDragViewportX = viewportX.coerceIn(0f, width.toFloat())
+
+        val contentX = lastDragViewportX + scrollX
+
+        val targetTag = getClosestSlotTag(contentX)
+
+        if (targetTag != -1 && targetTag != draggedTag) {
+            moveVisualSlot(draggedTag, targetTag)
+        }
+
+        updateEdgeScroll(lastDragViewportX)
+    }
+
+    private fun getClosestSlotTag(contentX: Float): Int {
+        var closest = -1
+        var minDistance = Float.MAX_VALUE
+
+        for (tag in visualOrder) {
+            if (tag == draggedTag) continue
+
+            val view = slotViews[tag] ?: continue
+
+            val left = desiredLeftByTag[tag] ?: view.left
+            val centerX = left + view.width / 2f
+
+            val distance = abs(contentX - centerX)
+
+            if (distance < minDistance) {
+                minDistance = distance
+                closest = tag
+            }
+        }
+
+        return closest
+    }
+
+    private fun moveVisualSlot(dragged: Int, target: Int) {
+        val from = visualOrder.indexOf(dragged)
+        val to = visualOrder.indexOf(target)
+
+        if (from == -1 || to == -1 || from == to) return
+
+        visualOrder.removeAt(from)
+        visualOrder.add(to, dragged)
+
+        applyVisualOrder(true)
+    }
+
+    private fun applyVisualOrder(animate: Boolean) {
+        if (visualOrder.isEmpty()) return
+
+        // If views are not laid out yet, do not calculate translations.
+        if (slotViews.values.any { it.width == 0 }) return
+
+        var cursor = container.paddingLeft
+        val spacerWidth = dp(6)
+
+        for ((position, tag) in visualOrder.withIndex()) {
+            val view = slotViews[tag] ?: continue
+
+            desiredLeftByTag[tag] = cursor
+
+            val translation = (cursor - view.left).toFloat()
+
+            if (animate) {
+                view.animate().cancel()
+                view.animate()
+                    .translationX(translation)
+                    .setDuration(animationDuration)
+                    .start()
+            } else {
+                view.translationX = translation
+            }
+
+            cursor += view.width
+
+            if (position < visualOrder.size - 1) {
+                cursor += spacerWidth
             }
         }
     }
 
-    private fun getDropIndex(x: Float): Int {
-        var closestIndex = -1
-        var minDistance = Float.MAX_VALUE
+    private fun updateEdgeScroll(viewportX: Float) {
+        if (!isDragging || width <= 0) {
+            stopEdgeScroll()
+            return
+        }
 
-        for (i in 0 until container.childCount) {
-            val child = container.getChildAt(i)
-            val index = child.tag as? Int
+        val maxScrollX = maxOf(0, container.width - width)
+        val edge = edgeSize
 
-            if (index != null) {
-                val centerX = child.left + child.width / 2f
-                val distance = kotlin.math.abs(x - centerX)
+        if (viewportX < edge && scrollX > 0) {
+            val distance = viewportX.coerceIn(0f, edge.toFloat())
+            val fraction = 1f - (distance / edge)
 
-                if (distance < minDistance) {
-                    minDistance = distance
-                    closestIndex = index
+            edgeScrollDirection = -1
+            edgeScrollSpeed = (maxEdgeScrollSpeed * fraction).toInt().coerceAtLeast(2)
+        } else if (viewportX > width - edge && scrollX < maxScrollX) {
+            val distance = (width - viewportX).coerceIn(0f, edge.toFloat())
+            val fraction = 1f - (distance / edge)
+
+            edgeScrollDirection = 1
+            edgeScrollSpeed = (maxEdgeScrollSpeed * fraction).toInt().coerceAtLeast(2)
+        } else {
+            stopEdgeScroll()
+            return
+        }
+
+        startEdgeScrollIfNeeded()
+    }
+
+    private fun startEdgeScrollIfNeeded() {
+        if (edgeScrollRunnable != null) return
+
+        val runnable = object : Runnable {
+            override fun run() {
+                if (!isDragging || edgeScrollDirection == 0) {
+                    edgeScrollRunnable = null
+                    return
+                }
+
+                scrollBy(edgeScrollDirection * edgeScrollSpeed, 0)
+
+                handleDragLocation(lastDragViewportX)
+
+                if (isDragging && edgeScrollDirection != 0) {
+                    postDelayed(this, 16)
+                } else {
+                    edgeScrollRunnable = null
                 }
             }
         }
 
-        return if (closestIndex != -1) closestIndex else 0
+        edgeScrollRunnable = runnable
+        post(runnable)
+    }
+
+    private fun stopEdgeScroll() {
+        edgeScrollDirection = 0
+        edgeScrollSpeed = 0
+
+        edgeScrollRunnable?.let {
+            removeCallbacks(it)
+        }
+
+        edgeScrollRunnable = null
+    }
+
+    private fun resetVisualState() {
+        stopEdgeScroll()
+
+        visualOrder.clear()
+        visualOrder.addAll(0 until slotCount)
+
+        desiredLeftByTag.clear()
+
+        slotViews[draggedTag]?.visibility = View.VISIBLE
+
+        applyVisualOrder(true)
+
+        draggedIndex = -1
+        draggedTag = -1
+        isDragging = false
+        dropHandled = false
+    }
+
+    private fun resetDragStateInternal() {
+        stopEdgeScroll()
+
+        draggedIndex = -1
+        draggedTag = -1
+        isDragging = false
+        dropHandled = false
     }
 
     private fun formatSlotName(name: String): String {
